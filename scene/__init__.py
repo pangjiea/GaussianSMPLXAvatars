@@ -92,6 +92,9 @@ class Scene:
         elif os.path.exists(os.path.join(args.source_path, "canonical_flame_param.npz")):
             print("Found FLAME parameter, assuming dynamic NeRF data set!")
             scene_info = sceneLoadTypeCallbacks["DynamicNerf"](args.source_path, args.white_background, args.eval, target_path=args.target_path)
+        elif os.path.exists(os.path.join(args.source_path, "canonical_smplx_param.json")):
+            print("smplx")
+            scene_info = sceneLoadTypeCallbacks["DynamicNerf"](args.source_path, args.white_background, args.eval, target_path=args.target_path)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
