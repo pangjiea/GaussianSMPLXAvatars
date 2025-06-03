@@ -1,17 +1,9 @@
-# 
-# Toyota Motor Europe NV/SA and its affiliated companies retain all intellectual 
-# property and proprietary rights in and to this software and related documentation. 
-# Any commercial use, reproduction, disclosure or distribution of this software and 
-# related documentation without an express license agreement from Toyota Motor Europe NV/SA 
-# is strictly prohibited.
-#
-
 from pathlib import Path
 import numpy as np
 import torch
 # from vht.model.flame import FlameHead
 from flame_model.flame import FlameHead
-
+from smplx.body_models import create
 from .gaussian_model import GaussianModel
 from utils.graphics_utils import compute_face_orientation
 # from pytorch3d.transforms import matrix_to_quaternion
@@ -267,3 +259,67 @@ class FlameGaussianModel(GaussianModel):
             self._scaling = self._scaling[mask]
             self._rotation = self._rotation[mask]
             self._opacity = self._opacity[mask]
+
+class SMPLXGaussianModel(GaussianModel):
+    def __init__(self, sh_degree : int):
+        super().__init__(sh_degree)
+        #加载smplx模型
+        self.smplx_model = create(model_path='smplx_model/smplx', model_type='smplx', gender='neutral', num_betas=100, num_expression_coeffs=50, use_pca=False, num_pca_comps=6, flat_hand_mean=True, ext='npz')
+        self.faces = self.smplx_model.faces.astype(np.int32)
+        self.smplx_param = None
+        self.smplx_param_orig = None
+    def load_
+def _main_():
+    # 实例化 SMPLXGaussianModel
+
+
+    model = SMPLXGaussianModel(sh_degree=3)
+
+    # 模拟 train_meshes, test_meshes, tgt_train_meshes, tgt_test_meshes
+    # 这些字典的结构需要与 load_meshes 期望的输入一致
+    # 至少需要包含 'static_offset', 'shape', 'expr', 'rotation', 'neck_pose', 'jaw_pose', 'eyes_pose', 'translation'
+    # 并且 'static_offset' 和 'shape' 只需要在 meshes[0] 中存在
+
+    num_verts = model.flame_model.v_template.shape[0]
+    # 假设 expr 的维度，根据 FlameHead 的 n_expr 参数
+    num_expr_coeffs = model.n_expr
+
+    # 模拟数据
+    mock_mesh_data_0 = {
+        'static_offset': np.random.rand(num_verts, 3).astype(np.float32),
+        'shape': np.random.rand(model.n_shape).astype(np.float32),
+        'expr': np.random.rand(num_expr_coeffs).astype(np.float32),
+        'rotation': np.random.rand(3).astype(np.float32),
+        'neck_pose': np.random.rand(3).astype(np.float32),
+        'jaw_pose': np.random.rand(3).astype(np.float32),
+        'eyes_pose': np.random.rand(6).astype(np.float32),
+        'translation': np.random.rand(3).astype(np.float32),
+        'dynamic_offset': np.random.rand(num_verts, 3).astype(np.float32),
+    }
+
+    mock_mesh_data_1 = {
+        'expr': np.random.rand(num_expr_coeffs).astype(np.float32),
+        'rotation': np.random.rand(3).astype(np.float32),
+        'neck_pose': np.random.rand(3).astype(np.float32),
+        'jaw_pose': np.random.rand(3).astype(np.float32),
+        'eyes_pose': np.random.rand(6).astype(np.float32),
+        'translation': np.random.rand(3).astype(np.float32),
+        'dynamic_offset': np.random.rand(num_verts, 3).astype(np.float32),
+    }
+
+    train_meshes = {0: mock_mesh_data_0, 1: mock_mesh_data_1}
+    test_meshes = {}
+    tgt_train_meshes = {}
+    tgt_test_meshes = {}
+
+    print("开始测试 load_meshes 方法...")
+    model.load_meshes(train_meshes, test_meshes, tgt_train_meshes, tgt_test_meshes)
+    print("load_meshes 方法测试完成。")
+
+    # 可以在这里添加断言或打印模型状态来验证
+    print(f"模型中的时间步数: {model.num_timesteps}")
+    print(f"flame_param['shape'] 的形状: {model.flame_param['shape'].shape}")
+    print(f"flame_param['expr'] 的形状: {model.flame_param['expr'].shape}")
+
+if __name__ == '__main__':
+    _main_()
