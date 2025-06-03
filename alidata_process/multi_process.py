@@ -29,10 +29,6 @@ TEST_CAMERA_ID_STR_LIST = []  # 测试集相机ID
 TEST_FRAMES_RATIO = 0.1
 TRAIN_VAL_SUBJECT_SEED = "SC_01"
 
-# 强制使用原生OpenCV坐标系，确保mesh坐标正确
-COORDINATE_SYSTEM = 'opencv'
-print(f"🔧 使用OpenCV坐标系处理数据，确保mesh坐标正确")
-
 # 全局变量，用于并行访问（重命名以反映OpenCV坐标系）
 all_camera_params_opencv = {}
 cam_id_str_to_int_idx = {}
