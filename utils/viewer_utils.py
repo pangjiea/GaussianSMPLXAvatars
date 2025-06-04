@@ -9,6 +9,7 @@
 from typing import Tuple, Literal
 import math
 import numpy as np
+import torch
 from scipy.spatial.transform import Rotation as R
 import json
 from pathlib import Path
@@ -39,35 +40,43 @@ def projection_from_intrinsics(K: np.ndarray, image_size: Tuple[int], near: floa
         ]
     """
 
-    B = K.shape[0]
+    is_tensor = torch.is_tensor(K)
+    if is_tensor:
+        device = K.device
+        dtype = K.dtype
+    K_np = K.cpu().numpy() if is_tensor else np.asarray(K)
+
+    B = K_np.shape[0]
     h, w = image_size
 
-    if K.shape[-2:] == (3, 3):
-        fx = K[..., 0, 0]
-        fy = K[..., 1, 1]
-        cx = K[..., 0, 2]
-        cy = K[..., 1, 2]
-    elif K.shape[-1] == 4:
-        # fx, fy, cx, cy = K[..., [0, 1, 2, 3]].split(1, dim=-1)
-        fx = K[..., [0]]
-        fy = K[..., [1]]
-        cx = K[..., [2]]
-        cy = K[..., [3]]
+    if K_np.shape[-2:] == (3, 3):
+        fx = K_np[..., 0, 0]
+        fy = K_np[..., 1, 1]
+        cx = K_np[..., 0, 2]
+        cy = K_np[..., 1, 2]
+    elif K_np.shape[-1] == 4:
+        fx = K_np[..., 0]
+        fy = K_np[..., 1]
+        cx = K_np[..., 2]
+        cy = K_np[..., 3]
     else:
         raise ValueError(f"Expected K to be (N, 3, 3) or (N, 4) but got: {K.shape}")
 
-    proj = np.zeros([B, 4, 4])
-    proj[:, 0, 0]  = fx * 2 / w 
-    proj[:, 1, 1]  = fy * 2 / h
-    proj[:, 0, 2]  = (w - 2 * cx) / w
-    proj[:, 1, 2]  = (h - 2 * cy) / h
-    proj[:, 2, 2]  = z_sign * (far+near) / (far-near)
-    proj[:, 2, 3]  = -2*far*near / (far-near)
-    proj[:, 3, 2]  = z_sign
+    proj_np = np.zeros([B, 4, 4], dtype=K_np.dtype)
+    proj_np[:, 0, 0]  = fx * 2 / w
+    proj_np[:, 1, 1]  = fy * 2 / h
+    proj_np[:, 0, 2]  = (w - 2 * cx) / w
+    proj_np[:, 1, 2]  = (h - 2 * cy) / h
+    proj_np[:, 2, 2]  = z_sign * (far+near) / (far-near)
+    proj_np[:, 2, 3]  = -2*far*near / (far-near)
+    proj_np[:, 3, 2]  = z_sign
 
     if flip_y:
-        proj[:, 1, 1] *= -1
-    return proj
+        proj_np[:, 1, 1] *= -1
+
+    if is_tensor:
+        return torch.from_numpy(proj_np).to(device=device, dtype=dtype)
+    return proj_np
 
 
 class OrbitCamera:
