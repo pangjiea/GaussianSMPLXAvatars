@@ -36,7 +36,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     if dataset.bind_to_mesh:
-        gaussians = FlameGaussianModel(dataset.sh_degree, dataset.disable_flame_static_offset, dataset.not_finetune_flame_params)
+        smplx_flag = os.path.exists(os.path.join(dataset.source_path, "canonical_smplx_param.json"))
+        if smplx_flag:
+            from scene.smplx_gaussian_model import SMPLXGaussianModel
+            gaussians = SMPLXGaussianModel(dataset.sh_degree)
+        else:
+            gaussians = FlameGaussianModel(dataset.sh_degree, dataset.disable_flame_static_offset, dataset.not_finetune_flame_params)
         mesh_renderer = NVDiffRenderer()
     else:
         gaussians = GaussianModel(dataset.sh_degree)
