@@ -21,6 +21,7 @@ from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.cameras import Camera
 from scene.gaussian_model import GaussianModel
 from scene.flame_gaussian_model import FlameGaussianModel
+from scene.smplx_gaussian_model import SMPLXGaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 from utils.general_utils import PILtoTorch
@@ -70,7 +71,7 @@ class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : Union[GaussianModel, FlameGaussianModel], load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(self, args : ModelParams, gaussians : Union[GaussianModel, SMPLXGaussianModel], load_iteration=None, shuffle=True, resolution_scales=[1.0]):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -129,17 +130,17 @@ class Scene:
             random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
-        print(f"""SceneInfo:
-        Train Cameras: {len(scene_info.train_cameras)}
-        Test Cameras: {len(scene_info.test_cameras)}
-        Validation Cameras: {len(scene_info.val_cameras)}
-        NeRF Normalization: {scene_info.nerf_normalization}
-        Point Cloud: {scene_info.point_cloud is not None}
-        PLY Path: {scene_info.ply_path}
-        Train Meshes: {len(scene_info.train_meshes)}
-        Test Meshes: {len(scene_info.test_meshes)}
-        Target Train Meshes: {len(scene_info.tgt_train_meshes)}
-        Target Test Meshes: {len(scene_info.tgt_test_meshes)}""")
+        # print(f"""SceneInfo:
+        # Train Cameras: {len(scene_info.train_cameras)}
+        # Test Cameras: {len(scene_info.test_cameras)}
+        # Validation Cameras: {len(scene_info.val_cameras)}
+        # NeRF Normalization: {scene_info.nerf_normalization}
+        # Point Cloud: {scene_info.point_cloud is not None}
+        # PLY Path: {scene_info.ply_path}
+        # Train Meshes: {len(scene_info.train_meshes)}
+        # Test Meshes: {len(scene_info.test_meshes)}
+        # Target Train Meshes: {len(scene_info.tgt_train_meshes)}
+        # Target Test Meshes: {len(scene_info.tgt_test_meshes)}""")
         for resolution_scale in resolution_scales:
             print("Loading Training Cameras")
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)

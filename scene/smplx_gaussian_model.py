@@ -49,7 +49,7 @@ class SMPLXGaussianModel(GaussianModel):
             flat_hand_mean=True,
             ext='npz',
         ).cuda()
-        self.faces = self.smplx_model.faces.astype(np.int32)
+        self.faces = self.smplx_model.faces.astype(np.int32)#这是面
         self.smplx_param = None
         self.smplx_param_orig = None
 
@@ -71,20 +71,17 @@ class SMPLXGaussianModel(GaussianModel):
         m0 = meshes[0]
         # Parameter dimensions can vary across frames when loaded from JSON,
         # so determine the maximum size for each.
-        dim_expr = max(len(m['expression']) for m in pose_meshes.values())
-        dim_lhand = max(len(m['left_hand_pose']) for m in pose_meshes.values())
-        dim_rhand = max(len(m['right_hand_pose']) for m in pose_meshes.values())
-        dim_body = max(len(m['body_pose']) for m in pose_meshes.values())
 
+        # Initialize SMPL-X parameters for each timestep
         self.smplx_param = {
             'betas': torch.from_numpy(np.array(m0['betas'])),
-            'expression': torch.zeros([T, dim_expr]),
-            'left_hand_pose': torch.zeros([T, dim_lhand]),
-            'right_hand_pose': torch.zeros([T, dim_rhand]),
+            'expression': torch.zeros([T, self.n_expr]),
+            'left_hand_pose': torch.zeros([T, 45]),
+            'right_hand_pose': torch.zeros([T, 45]),
             'jaw_pose': torch.zeros([T, 3]),
             'leye_pose': torch.zeros([T, 3]),
             'reye_pose': torch.zeros([T, 3]),
-            'body_pose': torch.zeros([T, dim_body]),
+            'body_pose': torch.zeros([T, 63]),
             'Rh': torch.zeros([T, 3]),
             'Th': torch.zeros([T, 3]),
             'global_orient': torch.zeros([T, 3]),
@@ -113,8 +110,9 @@ class SMPLXGaussianModel(GaussianModel):
         self.smplx_param_orig = {k: v.clone() for k, v in self.smplx_param.items()}
 
     def _smplx_forward(self, params):
+        num_frames = params['expression'].shape[0]
         body_par = {
-            'betas': params['betas'][None, ...],
+            'betas': params['betas'].expand(num_frames, -1) if params['betas'].ndim == 1 else params['betas'],
             'expression': params['expression'],
             'left_hand_pose': params['left_hand_pose'],
             'right_hand_pose': params['right_hand_pose'],
@@ -138,6 +136,7 @@ class SMPLXGaussianModel(GaussianModel):
         p = self.smplx_param_orig if (original and self.smplx_param_orig is not None) else self.smplx_param
         frame_param = {k: (v if k == 'betas' else v[[timestep]]) for k, v in p.items()}
         verts, verts_cano = self._smplx_forward(frame_param)
+        #print(verts.shape, verts_cano.shape)
         self.update_mesh_properties(verts, verts_cano)
 
     def update_mesh_by_param_dict(self, param_dict):
@@ -147,14 +146,29 @@ class SMPLXGaussianModel(GaussianModel):
         self.update_mesh_properties(verts, verts_cano)
 
     def update_mesh_properties(self, verts, verts_cano):
-        faces = torch.from_numpy(self.faces).cuda()
-        triangles = verts[:, faces]
+        # 假设最初 self.faces 是一个 NumPy ndarray
+        faces_np = self.faces  # 原始 NumPy 数组
+        #print(f"SMPLX faces shape: {faces_np.shape}")
+
+        # 先把 faces_np 转成 Tensor
+        device = verts.device
+        faces_tensor = torch.from_numpy(faces_np).long().to(device)
+
+        # 接下来所有计算都用 faces_tensor
+        triangles = verts[:, faces_tensor]
         self.face_center = triangles.mean(dim=-2).squeeze(0)
-        self.face_orien_mat, self.face_scaling = compute_face_orientation(verts.squeeze(0), faces.squeeze(0), return_scale=True)
+
+        self.face_orien_mat, self.face_scaling = compute_face_orientation(
+            verts.squeeze(0),
+            faces_tensor,
+            return_scale=True
+        )
         self.face_orien_quat = quat_xyzw_to_wxyz(rotmat_to_unitquat(self.face_orien_mat))
+
         self.verts = verts
-        self.faces = faces
+        # 这里不要再把 faces_tensor 赋给 self.faces，保持 self.faces 始终是 NumPy 数组
         self.verts_cano = verts_cano
+
 
     def compute_dynamic_offset_loss(self):
         return torch.tensor(0.0, device=self.verts.device if hasattr(self, 'verts') else 'cuda')
