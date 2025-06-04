@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from pathlib import Path
 from smplx.body_models import create
+import json
 
 from .gaussian_model import GaussianModel
 from utils.graphics_utils import compute_face_orientation
@@ -46,7 +47,7 @@ class SMPLXGaussianModel(GaussianModel):
             use_pca=False,
             num_pca_comps=6,
             flat_hand_mean=True,
-            ext='npz',
+            ext='json',
         ).cuda()
         self.faces = self.smplx_model.faces.astype(np.int32)
         self.smplx_param = None
@@ -81,8 +82,6 @@ class SMPLXGaussianModel(GaussianModel):
             'Th': torch.zeros([T, 3]),
             'global_orient': torch.zeros([T, 3]),
             'transl': torch.zeros([T, 3]),
-            'static_offset': torch.zeros([num_verts, 3]),
-            'dynamic_offset': torch.zeros([T, num_verts, 3]),
         }
 
         for i, mesh in pose_meshes.items():
@@ -120,14 +119,13 @@ class SMPLXGaussianModel(GaussianModel):
         if 'Rh' in params and 'Th' in params:
             Rh = axis_angle_to_matrix(params['Rh'])
             verts = verts @ Rh.transpose(1, 2) + params['Th'].unsqueeze(1)
-        verts = verts + params['static_offset'] + params['dynamic_offset']
-        verts_cano = out['v_shaped'] + params['static_offset']
+        verts_cano = out['v_shaped']
         return verts, verts_cano
 
     def select_mesh_by_timestep(self, timestep, original=False):
         self.timestep = timestep
         p = self.smplx_param_orig if (original and self.smplx_param_orig is not None) else self.smplx_param
-        frame_param = {k: (v if k in ['betas', 'static_offset'] else v[[timestep]]) for k, v in p.items()}
+        frame_param = {k: (v if k == 'betas' else v[[timestep]]) for k, v in p.items()}
         verts, verts_cano = self._smplx_forward(frame_param)
         self.update_mesh_properties(verts, verts_cano)
 
@@ -148,19 +146,10 @@ class SMPLXGaussianModel(GaussianModel):
         self.verts_cano = verts_cano
 
     def compute_dynamic_offset_loss(self):
-        loss_dynamic = self.smplx_param['dynamic_offset'][[self.timestep]].norm(dim=-1)
-        return loss_dynamic.mean()
+        return torch.tensor(0.0, device=self.verts.device if hasattr(self, 'verts') else 'cuda')
 
     def compute_laplacian_loss(self):
-        offset = self.smplx_param['dynamic_offset'][[self.timestep]]
-        verts_wo_offset = (self.verts_cano - offset).detach()
-        verts_w_offset = verts_wo_offset + offset
-        L = self.smplx_model.laplacian_matrix[None, ...].detach()
-        lap_wo = L.bmm(verts_wo_offset).detach()
-        lap_w = L.bmm(verts_w_offset)
-        diff = (lap_wo - lap_w) ** 2
-        diff = diff.sum(dim=-1, keepdim=True)
-        return diff.mean()
+        return torch.tensor(0.0, device=self.verts.device if hasattr(self, 'verts') else 'cuda')
 
     def training_setup(self, training_args):
         super().training_setup(training_args)
@@ -184,16 +173,18 @@ class SMPLXGaussianModel(GaussianModel):
 
     def save_ply(self, path):
         super().save_ply(path)
-        npz_path = Path(path).parent / 'smplx_param.npz'
-        smplx_param = {k: v.cpu().numpy() for k, v in self.smplx_param.items()}
-        np.savez(str(npz_path), **smplx_param)
+        json_path = Path(path).parent / 'smplx_param.json'
+        smplx_param = {k: v.cpu().tolist() for k, v in self.smplx_param.items()}
+        with open(json_path, 'w') as f:
+            json.dump(smplx_param, f)
 
     def load_ply(self, path, **kwargs):
         super().load_ply(path)
-        npz_path = Path(path).parent / 'smplx_param.npz'
-        if npz_path.exists():
-            smplx_param = np.load(str(npz_path))
-            smplx_param = {k: torch.from_numpy(v).cuda() for k, v in smplx_param.items()}
+        json_path = Path(path).parent / 'smplx_param.json'
+        if json_path.exists():
+            with open(json_path, 'r') as f:
+                smplx_param = json.load(f)
+            smplx_param = {k: torch.tensor(v, dtype=torch.float32).cuda() for k, v in smplx_param.items()}
             self.smplx_param = smplx_param
             self.num_timesteps = self.smplx_param['expression'].shape[0]
 
