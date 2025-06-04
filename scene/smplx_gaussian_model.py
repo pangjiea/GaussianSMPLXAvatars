@@ -268,11 +268,56 @@ class SMPLXGaussianModel(GaussianModel):
         self.faces = self.smplx_model.faces.astype(np.int32)
         self.smplx_param = None
         self.smplx_param_orig = None
-    def load_
+    def load_meshes(self, train_meshes, test_meshes, tgt_train_meshes, tgt_test_meshes):
+        if self.smplx_param is None:
+            meshes = {**train_meshes, **test_meshes}
+            tgt_meshes = {**tgt_train_meshes, **tgt_test_meshes}
+            pose_meshes = meshes if len(tgt_meshes) == 0 else tgt_meshes
+            
+            self.num_timesteps = max(pose_meshes) + 1  # required by viewers
+            num_verts = self.smplx_model.v_template.shape[0]
+
+            # if not self.disable_flame_static_offset:
+            #     static_offset = torch.from_numpy(meshes[0]['static_offset'])
+            #     if static_offset.shape[0] != num_verts:
+            #         static_offset = torch.nn.functional.pad(static_offset, (0, 0, 0, num_verts - meshes[0]['static_offset'].shape[1]))
+            # else:
+            #     static_offset = torch.zeros([num_verts, 3])
+
+            T = self.num_timesteps
+
+            self.smplx_param = {
+                'shape': torch.from_numpy(meshes[0]['shape']),
+                'expr': torch.zeros([T, meshes[0]['expr'].shape[1]]),
+                'rotation': torch.zeros([T, 3]),
+                'neck_pose': torch.zeros([T, 3]),
+                'jaw_pose': torch.zeros([T, 3]),
+                'eyes_pose': torch.zeros([T, 6]),
+                'translation': torch.zeros([T, 3]),
+                'static_offset': static_offset,
+                'dynamic_offset': torch.zeros([T, num_verts, 3]),
+            }
+
+            for i, mesh in pose_meshes.items():
+                self.flame_param['expr'][i] = torch.from_numpy(mesh['expr'])
+                self.flame_param['rotation'][i] = torch.from_numpy(mesh['rotation'])
+                self.flame_param['neck_pose'][i] = torch.from_numpy(mesh['neck_pose'])
+                self.flame_param['jaw_pose'][i] = torch.from_numpy(mesh['jaw_pose'])
+                self.flame_param['eyes_pose'][i] = torch.from_numpy(mesh['eyes_pose'])
+                self.flame_param['translation'][i] = torch.from_numpy(mesh['translation'])
+                # self.flame_param['dynamic_offset'][i] = torch.from_numpy(mesh['dynamic_offset'])
+            
+            for k, v in self.flame_param.items():
+                self.flame_param[k] = v.float().cuda()
+            
+            self.flame_param_orig = {k: v.clone() for k, v in self.flame_param.items()}
+        else:
+            # NOTE: not sure when this happens
+            import ipdb; ipdb.set_trace()
+            pass
+
 def _main_():
     # 实例化 SMPLXGaussianModel
-
-
     model = SMPLXGaussianModel(sh_degree=3)
 
     # 模拟 train_meshes, test_meshes, tgt_train_meshes, tgt_test_meshes
