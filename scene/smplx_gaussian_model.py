@@ -136,8 +136,8 @@ class SMPLXGaussianModel(GaussianModel):
         verts_min = verts.min(dim=1).values
         verts_max = verts.max(dim=1).values
         verts_range = verts_max - verts_min
-        print(f"SMPLX verts center: {verts_mean.shape} {verts_mean}")
-        print(f"SMPLX verts range: {verts_range.shape} {verts_range}")
+        # print(f"SMPLX verts center: {verts_mean.shape} {verts_mean}")
+        # print(f"SMPLX verts range: {verts_range.shape} {verts_range}")
         
         return verts, verts_cano
 
