@@ -1,5 +1,8 @@
+--extra-index-url https://download.pytorch.org/whl/cu118
+torch
+torchvision
+torchaudio
 tqdm
-torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 numpy==1.22.3
 matplotlib
 scipy
@@ -12,6 +15,5 @@ tyro
 dearpygui
 roma
 git+https://github.com/NVlabs/nvdiffrast
-#git+https://github.com/facebookresearch/pytorch3d.git
 submodules/diff-gaussian-rasterization
 submodules/simple-knn
