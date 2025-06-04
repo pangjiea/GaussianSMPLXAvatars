@@ -87,7 +87,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     
                     # mesh rendering
                     if gaussians.binding != None and msg['show_mesh']:
-                        out_dict = mesh_renderer.render_from_camera(gaussians.verts, gaussians.faces, custom_cam)
+                        faces_tensor = torch.from_numpy(gaussians.faces).to(gaussians.verts.device)
+                        out_dict = mesh_renderer.render_from_camera(gaussians.verts, faces_tensor, custom_cam)
 
                         rgba_mesh = out_dict['rgba'].squeeze(0).permute(2, 0, 1)  # (C, W, H)
                         rgb_mesh = rgba_mesh[:3, :, :]
@@ -157,7 +158,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             torchvision.utils.save_image(image, f"output/render_{iteration:06d}.png")
             torchvision.utils.save_image(gt_image, f"output/gt_{iteration:06d}.png")
             if gaussians.binding is not None:
-                out_dict = mesh_renderer.render_from_camera(gaussians.verts, gaussians.faces, viewpoint_cam)
+                faces_tensor = torch.from_numpy(gaussians.faces).to(gaussians.verts.device)
+                out_dict = mesh_renderer.render_from_camera(gaussians.verts, faces_tensor, viewpoint_cam)
                 rgba_mesh = out_dict['rgba'].squeeze(0).permute(2, 0, 1)
                 rgb_mesh = rgba_mesh[:3]
                 alpha_mesh = rgba_mesh[3:]
