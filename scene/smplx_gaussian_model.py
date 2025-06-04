@@ -69,15 +69,22 @@ class SMPLXGaussianModel(GaussianModel):
         T = self.num_timesteps
 
         m0 = meshes[0]
+        # Parameter dimensions can vary across frames when loaded from JSON,
+        # so determine the maximum size for each.
+        dim_expr = max(len(m['expression']) for m in pose_meshes.values())
+        dim_lhand = max(len(m['left_hand_pose']) for m in pose_meshes.values())
+        dim_rhand = max(len(m['right_hand_pose']) for m in pose_meshes.values())
+        dim_body = max(len(m['body_pose']) for m in pose_meshes.values())
+
         self.smplx_param = {
             'betas': torch.from_numpy(np.array(m0['betas'])),
-            'expression': torch.zeros([T, len(m0['expression'])]),
-            'left_hand_pose': torch.zeros([T, len(m0['left_hand_pose'])]),
-            'right_hand_pose': torch.zeros([T, len(m0['right_hand_pose'])]),
+            'expression': torch.zeros([T, dim_expr]),
+            'left_hand_pose': torch.zeros([T, dim_lhand]),
+            'right_hand_pose': torch.zeros([T, dim_rhand]),
             'jaw_pose': torch.zeros([T, 3]),
             'leye_pose': torch.zeros([T, 3]),
             'reye_pose': torch.zeros([T, 3]),
-            'body_pose': torch.zeros([T, len(m0['body_pose'])]),
+            'body_pose': torch.zeros([T, dim_body]),
             'Rh': torch.zeros([T, 3]),
             'Th': torch.zeros([T, 3]),
             'global_orient': torch.zeros([T, 3]),
@@ -85,13 +92,17 @@ class SMPLXGaussianModel(GaussianModel):
         }
 
         for i, mesh in pose_meshes.items():
-            self.smplx_param['expression'][i] = torch.from_numpy(np.array(mesh['expression']))
-            self.smplx_param['left_hand_pose'][i] = torch.from_numpy(np.array(mesh['left_hand_pose']))
-            self.smplx_param['right_hand_pose'][i] = torch.from_numpy(np.array(mesh['right_hand_pose']))
+            expr = torch.from_numpy(np.array(mesh['expression'])).view(-1)
+            lh_pose = torch.from_numpy(np.array(mesh['left_hand_pose'])).view(-1)
+            rh_pose = torch.from_numpy(np.array(mesh['right_hand_pose'])).view(-1)
+            body_pose = torch.from_numpy(np.array(mesh['body_pose'])).view(-1)
+            self.smplx_param['expression'][i, :len(expr)] = expr
+            self.smplx_param['left_hand_pose'][i, :len(lh_pose)] = lh_pose
+            self.smplx_param['right_hand_pose'][i, :len(rh_pose)] = rh_pose
             self.smplx_param['jaw_pose'][i] = torch.from_numpy(np.array(mesh['jaw_pose']))
             self.smplx_param['leye_pose'][i] = torch.from_numpy(np.array(mesh['leye_pose']))
             self.smplx_param['reye_pose'][i] = torch.from_numpy(np.array(mesh['reye_pose']))
-            self.smplx_param['body_pose'][i] = torch.from_numpy(np.array(mesh['body_pose']))
+            self.smplx_param['body_pose'][i, :len(body_pose)] = body_pose
             self.smplx_param['Rh'][i] = torch.from_numpy(np.array(mesh['Rh']))
             self.smplx_param['Th'][i] = torch.from_numpy(np.array(mesh['Th']))
             self.smplx_param['global_orient'][i] = torch.from_numpy(np.array(mesh['global_orient']))

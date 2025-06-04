@@ -23,6 +23,7 @@ import matplotlib
 
 from utils.viewer_utils import Mini3DViewer, Mini3DViewerConfig
 from gaussian_renderer import GaussianModel, FlameGaussianModel
+from scene.smplx_gaussian_model import SMPLXGaussianModel
 from gaussian_renderer import render
 from mesh_renderer import NVDiffRenderer
 
@@ -96,7 +97,10 @@ class LocalViewer(Mini3DViewer):
 
     def init_gaussians(self):
         # load gaussians
-        if (Path(self.cfg.point_path).parent / "flame_param.npz").exists():
+        point_dir = Path(self.cfg.point_path).parent if self.cfg.point_path is not None else Path('.')
+        if (point_dir / "smplx_param.npz").exists():
+            self.gaussians = SMPLXGaussianModel(self.cfg.sh_degree)
+        elif (point_dir / "flame_param.npz").exists():
             self.gaussians = FlameGaussianModel(self.cfg.sh_degree)
         else:
             self.gaussians = GaussianModel(self.cfg.sh_degree)
