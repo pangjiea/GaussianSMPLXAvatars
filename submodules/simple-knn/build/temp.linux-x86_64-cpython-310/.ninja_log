@@ -1,0 +1,4 @@
+# ninja log v6
+5	6820	1748421145644423934	/home/hello/code/GaussianAvatars/submodules/simple-knn/build/temp.linux-x86_64-cpython-310/simple_knn.o	6cc43d0012d2eb4
+4	10020	1748421145643423929	/home/hello/code/GaussianAvatars/submodules/simple-knn/build/temp.linux-x86_64-cpython-310/ext.o	f8ec980b8c67922f
+5	31342	1748421145644423934	/home/hello/code/GaussianAvatars/submodules/simple-knn/build/temp.linux-x86_64-cpython-310/spatial.o	cadecdea64cbc582
