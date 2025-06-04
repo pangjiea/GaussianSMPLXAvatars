@@ -280,17 +280,34 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
                            ply_path=ply_path)
     return scene_info
 
+def _load_param_file(path: str):
+    """Load parameter file supporting both numpy and json formats."""
+    if path.endswith(".npz") or path.endswith(".npy"):
+        return dict(np.load(path, allow_pickle=True))
+    else:
+        with open(path, "r") as f:
+            return json.load(f)
+
+
 def readMeshesFromTransforms(path, transformsfile):
     with open(os.path.join(path, transformsfile)) as json_file:
         contents = json.load(json_file)
         frames = contents["frames"]
-        
+
         mesh_infos = {}
         for idx, frame in tqdm(enumerate(frames), total=len(frames)):
             if not 'timestep_index' in frame or frame["timestep_index"] in mesh_infos:
                 continue
 
-            flame_param = dict(np.load(os.path.join(path, frame['flame_param_path']), allow_pickle=True))
+            if 'flame_param_path' in frame:
+                param_path = frame['flame_param_path']
+            elif 'smplx_param_path' in frame:
+                param_path = frame['smplx_param_path']
+            else:
+                continue
+
+            param_full_path = os.path.join(path, param_path)
+            flame_param = _load_param_file(param_full_path)
             mesh_infos[frame["timestep_index"]] = flame_param
     return mesh_infos
 
