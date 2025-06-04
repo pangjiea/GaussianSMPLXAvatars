@@ -12,12 +12,14 @@
 import torch
 from torch import nn
 import numpy as np
-from utils.graphics_utils import getWorld2View2, getProjectionMatrix
+from utils.graphics_utils import getWorld2View2, fov2focal
+from utils.viewer_utils import projection_from_intrinsics
 
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, bg, image_width, image, image_height, image_path,
-                 image_name, uid, trans=np.array([0.0, 0.0, 0.0]), scale=1.0, 
-                 timestep=None, data_device = "cuda"
+                 image_name, uid, trans=np.array([0.0, 0.0, 0.0]), scale=1.0,
+                 timestep=None, data_device = "cuda",
+                 cx=None, cy=None, fx=None, fy=None
                  ):
         super(Camera, self).__init__()
 
@@ -34,6 +36,10 @@ class Camera(nn.Module):
         self.image_path = image_path
         self.image_name = image_name
         self.timestep = timestep
+        self.cx = cx if cx is not None else image_width / 2
+        self.cy = cy if cy is not None else image_height / 2
+        self.fx = fx if fx is not None else fov2focal(FoVx, image_width)
+        self.fy = fy if fy is not None else fov2focal(FoVy, image_height)
 
         self.zfar = 100.0
         self.znear = 0.01
@@ -41,15 +47,33 @@ class Camera(nn.Module):
         self.trans = trans
         self.scale = scale
 
-        self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1)  #.cuda()
-        self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1)  #.cuda()
-        self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
+        self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1)
+
+        K = torch.tensor([
+            [self.fx, 0.0, self.cx],
+            [0.0, self.fy, self.cy],
+            [0.0, 0.0, 1.0],
+        ])
+        self.projection_matrix = torch.tensor(
+            projection_from_intrinsics(
+                K[None],
+                (self.image_height, self.image_width),
+                self.znear,
+                self.zfar,
+            )[0]
+        )
+        self.full_proj_transform = (
+            self.world_view_transform.unsqueeze(0).bmm(
+                self.projection_matrix.unsqueeze(0)
+            )
+        ).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
 
 class MiniCam:
-    def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform, timestep):
+    def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform, timestep,
+                 cx=None, cy=None, fx=None, fy=None):
         self.image_width = width
-        self.image_height = height    
+        self.image_height = height
         self.FoVy = fovy
         self.FoVx = fovx
         self.znear = znear
@@ -59,4 +83,8 @@ class MiniCam:
         view_inv = torch.inverse(self.world_view_transform)
         self.camera_center = view_inv[3][:3]
         self.timestep = timestep
+        self.cx = cx if cx is not None else width / 2
+        self.cy = cy if cy is not None else height / 2
+        self.fx = fx if fx is not None else fov2focal(fovx, width)
+        self.fy = fy if fy is not None else fov2focal(fovy, height)
 

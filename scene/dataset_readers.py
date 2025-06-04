@@ -38,6 +38,10 @@ class CameraInfo(NamedTuple):
     bg: np.array = np.array([0, 0, 0])
     timestep: Optional[int] = None
     camera_id: Optional[int] = None
+    cx: Optional[float] = None
+    cy: Optional[float] = None
+    fx: Optional[float] = None
+    fy: Optional[float] = None
 
 class SceneInfo(NamedTuple):
     train_cameras: list
@@ -93,11 +97,16 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
 
         if intr.model=="SIMPLE_PINHOLE":
             focal_length_x = intr.params[0]
-            FovY = focal2fov(focal_length_x, height)
+            focal_length_y = intr.params[0]
+            cx = intr.params[1]
+            cy = intr.params[2]
+            FovY = focal2fov(focal_length_y, height)
             FovX = focal2fov(focal_length_x, width)
         elif intr.model=="PINHOLE":
             focal_length_x = intr.params[0]
             focal_length_y = intr.params[1]
+            cx = intr.params[2]
+            cy = intr.params[3]
             FovY = focal2fov(focal_length_y, height)
             FovX = focal2fov(focal_length_x, width)
         else:
@@ -109,7 +118,8 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         width, height = image.size
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                              image_path=image_path, image_name=image_name, width=width, height=height)
+                              image_path=image_path, image_name=image_name, width=width, height=height,
+                              cx=cx, cy=cy, fx=focal_length_x, fy=focal_length_y)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
@@ -228,20 +238,32 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
                 image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
                 width, height = image.size
 
-            if 'camera_angle_x' in frame:
-                fovx = frame["camera_angle_x"]
+            if 'fl_x' in frame and 'fl_y' in frame:
+                fx = frame['fl_x']
+                fy = frame['fl_y']
+                fovx = focal2fov(fx, width)
+                fovy = focal2fov(fy, height)
             else:
-                fovx = fovx_shared
-            fovy = focal2fov(fov2focal(fovx, width), height)
+                if 'camera_angle_x' in frame:
+                    fovx = frame["camera_angle_x"]
+                else:
+                    fovx = fovx_shared
+                fovy = focal2fov(fov2focal(fovx, width), height)
+                fx = fov2focal(fovx, width)
+                fy = fov2focal(fovy, height)
+
+            cx = frame['cx'] if 'cx' in frame else width / 2
+            cy = frame['cy'] if 'cy' in frame else height / 2
 
             timestep = frame["timestep_index"] if 'timestep_index' in frame else None
             camera_id = frame["camera_index"] if 'camera_id' in frame else None
             
             cam_infos.append(CameraInfo(
-                uid=idx, R=R, T=T, FovY=fovy, FovX=fovx, bg=bg, image=image, 
-                image_path=image_path, image_name=image_name, 
-                width=width, height=height, 
-                timestep=timestep, camera_id=camera_id))
+                uid=idx, R=R, T=T, FovY=fovy, FovX=fovx, bg=bg, image=image,
+                image_path=image_path, image_name=image_name,
+                width=width, height=height,
+                timestep=timestep, camera_id=camera_id,
+                cx=cx, cy=cy, fx=fx, fy=fy))
     return cam_infos
 
 def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
