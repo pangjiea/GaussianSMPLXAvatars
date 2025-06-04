@@ -39,7 +39,7 @@ class SMPLXGaussianModel(GaussianModel):
         self.n_betas = n_betas
         self.n_expr = n_expr
         self.smplx_model = create(
-            model_path='smplx_model/smplx',
+            model_path='smplx_model',
             model_type='smplx',
             gender='neutral',
             num_betas=n_betas,
