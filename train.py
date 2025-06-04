@@ -47,6 +47,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
+    if dataset.bind_to_mesh:
+        gaussians.select_mesh_by_timestep(0)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
@@ -145,18 +147,26 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             pipe.debug = True
         render_pkg = render(viewpoint_cam, gaussians, pipe, background)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-        #保存这两张对比图像
-        import torchvision  # 用于 save_image
+
+        gt_image = viewpoint_cam.original_image.cuda()
+
+        # 保存这两张对比图像及mesh渲染
+        import torchvision
         from torchvision.utils import save_image
-        # 如果想用 PIL 也可以：
-        from PIL import Image
         if iteration % 50 == 0:
             torchvision.utils.save_image(image, f"output/render_{iteration:06d}.png")
             torchvision.utils.save_image(gt_image, f"output/gt_{iteration:06d}.png")
+            if gaussians.binding is not None:
+                out_dict = mesh_renderer.render_from_camera(gaussians.verts, gaussians.faces, viewpoint_cam)
+                rgba_mesh = out_dict['rgba'].squeeze(0).permute(2, 0, 1)
+                rgb_mesh = rgba_mesh[:3]
+                alpha_mesh = rgba_mesh[3:]
+                mesh_opacity = 0.5
+                image_mesh = rgb_mesh * alpha_mesh * mesh_opacity + image * (alpha_mesh * (1 - mesh_opacity) + (1 - alpha_mesh))
+                torchvision.utils.save_image(image_mesh, f"output/render_mesh_{iteration:06d}.png")
 
         # Loss
-        gt_image = viewpoint_cam.original_image.cuda()
-
+        
         losses = {}
         losses['l1'] = l1_loss(image, gt_image) * (1.0 - opt.lambda_dssim)
         losses['ssim'] = (1.0 - ssim(image, gt_image)) * opt.lambda_dssim
