@@ -221,10 +221,10 @@ class NVDiffRenderer(torch.nn.Module):
 
         verts_camera = self.world_to_camera(verts, RT)[..., :3]
         verts_clip = self.world_to_clip(verts, None, None, image_size, mvp=full_proj)
-        tri = faces.int()
+        tri = torch.from_numpy(faces).int().cuda()
         rast_out, rast_out_db = dr.rasterize(self.glctx, verts_clip, tri, image_size)
 
-        faces = faces.int()
+        faces = torch.from_numpy(faces).int().cuda()
         fg_mask = torch.clamp(rast_out[..., -1:], 0, 1).bool()
         face_id = torch.clamp(rast_out[..., -1:].long() - 1, 0)  # (B, W, H, 1)
         W, H = face_id.shape[1:3]

@@ -87,7 +87,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     
                     # mesh rendering
                     if gaussians.binding != None and msg['show_mesh']:
-                        out_dict = mesh_renderer.render_from_camera(gaussians.verts, gaussians.faces, custom_cam)
+                        faces_tensor = torch.from_numpy(gaussians.faces).to(gaussians.verts.device)
+                        out_dict = mesh_renderer.render_from_camera(gaussians.verts, faces_tensor, custom_cam)
 
                         rgba_mesh = out_dict['rgba'].squeeze(0).permute(2, 0, 1)  # (C, W, H)
                         rgb_mesh = rgba_mesh[:3, :, :]
@@ -122,22 +123,22 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             iter_camera_train = iter(loader_camera_train)
             viewpoint_cam = next(iter_camera_train)
 
-        # print("=== Viewpoint Camera Info ===")
-        # print("UID:", viewpoint_cam.uid)
-        # print("COLMAP ID:", viewpoint_cam.colmap_id)
-        # print("FoVx / FoVy:", viewpoint_cam.FoVx, viewpoint_cam.FoVy)
-        # print("R:\n", viewpoint_cam.R)
-        # print("T:\n", viewpoint_cam.T)
-        # print("Translation (trans):", viewpoint_cam.trans)
-        # print("Scale:", viewpoint_cam.scale)
-        # print("Image Path:", viewpoint_cam.image_path)
-        # print("Timestep:", viewpoint_cam.timestep)
-        # print("World2View:\n", viewpoint_cam.world_view_transform)
-        # print("Projection:\n", viewpoint_cam.projection_matrix)
-        # print("Full Proj:\n", viewpoint_cam.full_proj_transform)
-        # print("Camera Center:", viewpoint_cam.camera_center)
-        # print("Image Size:", viewpoint_cam.image_width, "x", viewpoint_cam.image_height)
-        # print("===============================")
+        print("=== Viewpoint Camera Info ===")
+        print("UID:", viewpoint_cam.uid)
+        print("COLMAP ID:", viewpoint_cam.colmap_id)
+        print("FoVx / FoVy:", viewpoint_cam.FoVx, viewpoint_cam.FoVy)
+        print("R:\n", viewpoint_cam.R)
+        print("T:\n", viewpoint_cam.T)
+        print("Translation (trans):", viewpoint_cam.trans)
+        print("Scale:", viewpoint_cam.scale)
+        print("Image Path:", viewpoint_cam.image_path)
+        print("Timestep:", viewpoint_cam.timestep)
+        print("World2View:\n", viewpoint_cam.world_view_transform)
+        print("Projection:\n", viewpoint_cam.projection_matrix)
+        print("Full Proj:\n", viewpoint_cam.full_proj_transform)
+        print("Camera Center:", viewpoint_cam.camera_center)
+        print("Image Size:", viewpoint_cam.image_width, "x", viewpoint_cam.image_height)
+        print("===============================")
 
         if gaussians.binding != None:
             gaussians.select_mesh_by_timestep(viewpoint_cam.timestep)

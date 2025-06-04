@@ -128,7 +128,17 @@ class SMPLXGaussianModel(GaussianModel):
         if 'Rh' in params and 'Th' in params:
             Rh = axis_angle_to_matrix(params['Rh'])
             verts = verts @ Rh.transpose(1, 2) + params['Th'].unsqueeze(1)
+        
         verts_cano = out['v_shaped']
+        
+        # 计算并输出顶点的中心和范围
+        verts_mean = verts.mean(dim=1)
+        verts_min = verts.min(dim=1).values
+        verts_max = verts.max(dim=1).values
+        verts_range = verts_max - verts_min
+        print(f"SMPLX verts center: {verts_mean.shape} {verts_mean}")
+        print(f"SMPLX verts range: {verts_range.shape} {verts_range}")
+        
         return verts, verts_cano
 
     def select_mesh_by_timestep(self, timestep, original=False):
