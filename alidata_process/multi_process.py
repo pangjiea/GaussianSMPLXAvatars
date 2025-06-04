@@ -16,15 +16,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 alidata_path = Path("/home/hello/data")
 subject_name = "SC_01"
 
-MASK_BASE_DIR = Path("/home/hello/remote/server2/data/sapiens_processing/final_head_segments_multigpu/raw_videos/masks")
-IMAGE_BASE_DIR = Path("/home/hello/remote/server2/data/sapiens_processing/final_head_segments_multigpu/raw_videos/masked_images")  # 原始图像目录
-UNDISTORTED_IMAGE_DIR = Path("/home/hello/remote/server2/data/sapiens_processing/alidata_process/undistorted_images") / subject_name
+MASK_BASE_DIR = Path("/home/hello/remote/server2/data1/sapiens_processing/final_head_segments_multigpu/raw_videos/masks")
+IMAGE_BASE_DIR = Path("/home/hello/remote/server2/data1/sapiens_processing/final_head_segments_multigpu/raw_videos/masked_images")  # 原始图像目录
+UNDISTORTED_IMAGE_DIR = Path("/home/hello/remote/server2/data1/sapiens_processing/alidata_process/undistorted_images") / subject_name
 SMPLX_FITTING_DIR = alidata_path / subject_name / "smplx_fitting"
 CALIBRATION_FILE = alidata_path / subject_name / "calibration.json"
 OUTPUT_DATASET_DIR = Path("/home/hello/data/SC_01/export")
 
 NUM_FRAMES = 20  # 总帧数
-USED_CAMERA_ID_STR_LIST = ["019","054"]  # 使用的相机ID列表
+USED_CAMERA_ID_STR_LIST = ["019","028"]  # 使用的相机ID列表
 TEST_CAMERA_ID_STR_LIST = []  # 测试集相机ID
 TEST_FRAMES_RATIO = 0.1
 TRAIN_VAL_SUBJECT_SEED = "SC_01"
@@ -211,9 +211,7 @@ def process_single_frame_cam(frame_idx, cam_id_str):
     return {
         "timestep_index": frame_idx,
         "timestep_index_original": frame_idx,
-        "timestep_id": f"{frame_idx:06d}",
         "camera_index": idx,
-        "camera_id": str(idx),
 
         "cx": cam['cx'],
         "cy": cam['cy'],
@@ -279,7 +277,7 @@ def generate_transforms_metadata(frames_data, camera_params, sorted_camera_ids):
     """生成transforms.json文件的元数据。"""
     meta = {
         'camera_angle_x': 0, 'camera_angle_y': 0, 'fl_x': 0, 'fl_y': 0, 'cx': 0, 'cy': 0, 'w': 0, 'h': 0,
-        'frames': [], 'coordinate_system': COORDINATE_SYSTEM, 'applied_transform': np.eye(4).tolist(),
+        'frames': [],'applied_transform': np.eye(4).tolist(),
         'k1': 0, 'k2': 0, 'p1': 0, 'p2': 0, 'k3': 0
     }
 
@@ -305,8 +303,8 @@ def generate_transforms_metadata(frames_data, camera_params, sorted_camera_ids):
         
     meta['frames'] = frames_data
     if frames_data:
-        meta['timestep_indices'] = sorted(list(set(f['timestep_id'] for f in frames_data)))
-        meta['camera_indices'] = sorted(list(set(f['camera_id'] for f in frames_data)))
+        meta['timestep_indices'] = sorted(list(set(f['timestep_index'] for f in frames_data)))
+        meta['camera_indices'] = sorted(list(set(f['camera_index'] for f in frames_data)))
     else:
         meta['timestep_indices'] = []
         meta['camera_indices'] = []
@@ -319,11 +317,11 @@ def split_dataset_and_save_metadata(frames_data, base_meta, cam_id_map):
     print("📊 划分 train/val/test 数据集...")
 
     test_camera_int_ids = {cam_id_map[c] for c in TEST_CAMERA_ID_STR_LIST if c in cam_id_map}
-    test_set = [f for f in frames_data if f['camera_id'] in test_camera_int_ids]
+    test_set = [f for f in frames_data if f['camera_index'] in test_camera_int_ids]
     
     train_val_set = [f for f in frames_data if f not in test_set]
     
-    train_val_timesteps = sorted({f['timestep_id'] for f in train_val_set})
+    train_val_timesteps = sorted({f['timestep_index'] for f in train_val_set})
     num_val_frames = int(len(train_val_timesteps) * TEST_FRAMES_RATIO) or 1
     
     rng = random.Random(TRAIN_VAL_SUBJECT_SEED)
@@ -332,14 +330,14 @@ def split_dataset_and_save_metadata(frames_data, base_meta, cam_id_map):
     val_timesteps = set(train_val_timesteps[:num_val_frames])
     train_timesteps = set(train_val_timesteps[num_val_frames:])
     
-    train_set = [f for f in train_val_set if f['timestep_id'] in train_timesteps]
-    val_set = [f for f in train_val_set if f['timestep_id'] in val_timesteps]
+    train_set = [f for f in train_val_set if f['timestep_index'] in train_timesteps]
+    val_set = [f for f in train_val_set if f['timestep_index'] in val_timesteps]
 
     def save_split_metadata(name, data_subset):
         split_meta = deepcopy(base_meta)
         split_meta['frames'] = data_subset
-        split_meta['timestep_indices'] = sorted(list(set(f['timestep_id'] for f in data_subset)))
-        split_meta['camera_indices'] = sorted(list(set(f['camera_id'] for f in data_subset)))
+        split_meta['timestep_indices'] = sorted(list(set(f['timestep_index'] for f in data_subset)))
+        split_meta['camera_indices'] = sorted(list(set(f['camera_index'] for f in data_subset)))
         write_json_to_file(split_meta, OUTPUT_DATASET_DIR / f'transforms_{name}.json')
 
     save_split_metadata('train', train_set)

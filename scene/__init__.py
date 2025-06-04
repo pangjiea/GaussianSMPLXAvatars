@@ -129,7 +129,17 @@ class Scene:
             random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
-
+        print(f"""SceneInfo:
+        Train Cameras: {len(scene_info.train_cameras)}
+        Test Cameras: {len(scene_info.test_cameras)}
+        Validation Cameras: {len(scene_info.val_cameras)}
+        NeRF Normalization: {scene_info.nerf_normalization}
+        Point Cloud: {scene_info.point_cloud is not None}
+        PLY Path: {scene_info.ply_path}
+        Train Meshes: {len(scene_info.train_meshes)}
+        Test Meshes: {len(scene_info.test_meshes)}
+        Target Train Meshes: {len(scene_info.tgt_train_meshes)}
+        Target Test Meshes: {len(scene_info.tgt_test_meshes)}""")
         for resolution_scale in resolution_scales:
             print("Loading Training Cameras")
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
