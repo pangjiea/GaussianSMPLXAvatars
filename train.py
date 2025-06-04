@@ -18,6 +18,9 @@ from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 from mesh_renderer import NVDiffRenderer
 import sys
+
+if torch.multiprocessing.get_start_method(allow_none=True) != "spawn":
+    torch.multiprocessing.set_start_method("spawn", force=True)
 from scene import Scene, GaussianModel, FlameGaussianModel
 from utils.general_utils import safe_state
 import uuid
