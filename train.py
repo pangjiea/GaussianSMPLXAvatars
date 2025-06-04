@@ -145,6 +145,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             pipe.debug = True
         render_pkg = render(viewpoint_cam, gaussians, pipe, background)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        #保存这两张对比图像
+        import torchvision  # 用于 save_image
+        from torchvision.utils import save_image
+        # 如果想用 PIL 也可以：
+        from PIL import Image
+        if iteration % 50 == 0:
+            torchvision.utils.save_image(image, f"output/render_{iteration:06d}.png")
+            torchvision.utils.save_image(gt_image, f"output/gt_{iteration:06d}.png")
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()

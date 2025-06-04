@@ -14,9 +14,10 @@ import math
 from typing import Union
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene import GaussianModel, FlameGaussianModel
+from scene import SMPLXGaussianModel
 from utils.sh_utils import eval_sh
 
-def render(viewpoint_camera, pc : Union[GaussianModel, FlameGaussianModel], pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
+def render(viewpoint_camera, pc : Union[GaussianModel, SMPLXGaussianModel], pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
     """
     Render the scene. 
     
