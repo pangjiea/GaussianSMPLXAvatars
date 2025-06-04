@@ -54,14 +54,12 @@ class Camera(nn.Module):
             [0.0, self.fy, self.cy],
             [0.0, 0.0, 1.0],
         ])
-        self.projection_matrix = torch.tensor(
-            projection_from_intrinsics(
-                K[None],
-                (self.image_height, self.image_width),
-                self.znear,
-                self.zfar,
-            )[0]
-        )
+        self.projection_matrix = projection_from_intrinsics(
+            K[None],
+            (self.image_height, self.image_width),
+            self.znear,
+            self.zfar,
+        )[0]
         self.full_proj_transform = (
             self.world_view_transform.unsqueeze(0).bmm(
                 self.projection_matrix.unsqueeze(0)
