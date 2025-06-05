@@ -250,16 +250,32 @@ class GaussianModel:
                 l.append('binding_{}'.format(i))
         return l
 
-    def save_ply(self, path):
+    def save_ply(self, path, use_global=False):
+        """Export the Gaussian point cloud to a PLY file.
+
+        Parameters
+        ----------
+        path : str or Path
+            Destination path of the PLY file.
+        use_global : bool, optional
+            When ``True`` the points are exported in world coordinates with
+            global scale and rotation; otherwise the raw local values are
+            written.  ``False`` by default.
+        """
         mkdir_p(os.path.dirname(path))
 
-        xyz = self._xyz.detach().cpu().numpy()
+        if use_global:
+            xyz = self.get_xyz.detach().cpu().numpy()
+            scale = self.get_scaling.detach().cpu().numpy()
+            rotation = self.get_rotation.detach().cpu().numpy()
+        else:
+            xyz = self._xyz.detach().cpu().numpy()
+            scale = self._scaling.detach().cpu().numpy()
+            rotation = self._rotation.detach().cpu().numpy()
         normals = np.zeros_like(xyz)
         f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         opacities = self._opacity.detach().cpu().numpy()
-        scale = self._scaling.detach().cpu().numpy()
-        rotation = self._rotation.detach().cpu().numpy()
 
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
