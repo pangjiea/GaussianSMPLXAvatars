@@ -49,7 +49,12 @@ class SMPLXGaussianModel(GaussianModel):
             flat_hand_mean=True,
             ext='npz',
         ).cuda()
-        self.faces = self.smplx_model.faces.astype(np.int32)#这是面
+        #self.faces = self.smplx_model.faces.astype(np.int32)#这是面
+        raw_faces = self.smplx_model.faces.astype(np.int32)               # [F_total, 3]
+        flame_idx = np.load('smplx_model/SMPL-X__FLAME_vertex_ids.npy')   # 假设这是 1-based 索引
+        flame_idx = flame_idx.astype(np.int64) 
+        mask = np.all(np.isin(raw_faces, flame_idx), axis=1)               # 所有顶点都在头部?
+        self.faces = raw_faces[mask]   
         self.smplx_param = None
         self.smplx_param_orig = None
 
@@ -131,11 +136,6 @@ class SMPLXGaussianModel(GaussianModel):
         
         verts_cano = out['v_shaped']
         
-        # 计算并输出顶点的中心和范围
-        verts_mean = verts.mean(dim=1)
-        verts_min = verts.min(dim=1).values
-        verts_max = verts.max(dim=1).values
-        verts_range = verts_max - verts_min
         # print(f"SMPLX verts center: {verts_mean.shape} {verts_mean}")
         # print(f"SMPLX verts range: {verts_range.shape} {verts_range}")
         

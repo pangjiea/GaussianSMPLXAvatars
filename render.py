@@ -136,7 +136,7 @@ if __name__ == "__main__":
     parser = ArgumentParser(description="Testing script parameters")
     model = ModelParams(parser, sentinel=True)
     pipeline = PipelineParams(parser)
-    parser.add_argument("--iteration", default=-1, type=int)
+    parser.add_argument("--iteration", default=-5000, type=int)
     parser.add_argument("--skip_train", action="store_true")
     parser.add_argument("--skip_val", action="store_true")
     parser.add_argument("--skip_test", action="store_true")
