@@ -38,6 +38,10 @@ class CameraInfo(NamedTuple):
     bg: np.array = np.array([0, 0, 0])
     timestep: Optional[int] = None
     camera_id: Optional[int] = None
+    cx: Optional[float] = None
+    cy: Optional[float] = None
+    fx: Optional[float] = None
+    fy: Optional[float] = None
 
 class SceneInfo(NamedTuple):
     train_cameras: list
@@ -235,13 +239,20 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             fovy = focal2fov(fov2focal(fovx, width), height)
 
             timestep = frame["timestep_index"] if 'timestep_index' in frame else None
-            camera_id = frame["camera_index"] if 'camera_id' in frame else None
+            camera_id = frame["camera_id"] if 'camera_id' in frame else None
+            cx = frame['cx'] if 'cx' in frame else None
+            cy = frame['cy'] if 'cy' in frame else None
+            fx = frame['fl_x'] if 'fl_x' in frame else None
+            fy = frame['fl_y'] if 'fl_y' in frame else None
+            print(f"Camera {idx}: {image_name}, Timestep: {timestep}, Camera ID: {camera_id}, "
+                    f"FovX: {fovx}, FovY: {fovy}, Width: {width}, Height: {height}, "
+                    f"cx: {cx}, cy: {cy}, fx: {fx}, fy: {fy}")
             
             cam_infos.append(CameraInfo(
-                uid=idx, R=R, T=T, FovY=fovy, FovX=fovx, bg=bg, image=image, 
-                image_path=image_path, image_name=image_name, 
-                width=width, height=height, 
-                timestep=timestep, camera_id=camera_id))
+                uid=idx, R=R, T=T, FovY=fovy, FovX=fovx, bg=bg, image=image,
+                image_path=image_path, image_name=image_name,
+                width=width, height=height,
+                timestep=timestep, camera_id=camera_id, cx=cx, cy=cy, fx=fx, fy=fy))
     return cam_infos
 
 def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
