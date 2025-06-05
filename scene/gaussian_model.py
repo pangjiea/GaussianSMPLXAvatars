@@ -250,10 +250,13 @@ class GaussianModel:
                 l.append('binding_{}'.format(i))
         return l
 
-    def save_ply(self, path):
+    def save_ply(self, path, use_global=False):
         mkdir_p(os.path.dirname(path))
 
-        xyz = self._xyz.detach().cpu().numpy()
+        if use_global:
+            xyz = self.get_xyz.detach().cpu().numpy()
+        else:
+            xyz = self._xyz.detach().cpu().numpy()
         normals = np.zeros_like(xyz)
         f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
