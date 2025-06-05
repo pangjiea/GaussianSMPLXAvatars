@@ -23,8 +23,8 @@ SMPLX_FITTING_DIR = alidata_path / subject_name / "smplx_fitting"
 CALIBRATION_FILE = alidata_path / subject_name / "calibration.json"
 OUTPUT_DATASET_DIR = Path("/home/hello/data/SC_01/export")
 
-NUM_FRAMES = 20  # 总帧数
-USED_CAMERA_ID_STR_LIST = ["019","028"]  # 使用的相机ID列表
+NUM_FRAMES = 1280  # 总帧数
+USED_CAMERA_ID_STR_LIST = ["019","028","001","046","003","004","005","009","010","017","022","031","032","041"]  # 使用的相机ID列表
 TEST_CAMERA_ID_STR_LIST = []  # 测试集相机ID
 TEST_FRAMES_RATIO = 0.1
 TRAIN_VAL_SUBJECT_SEED = "SC_01"
@@ -263,7 +263,14 @@ def process_all_frames_and_cameras(camera_params, cam_id_map, sorted_camera_ids)
     all_camera_params_opencv = camera_params
     cam_id_str_to_int_idx = cam_id_map
 
-    tasks = [(f, c) for f in range(NUM_FRAMES) if (SMPLX_FITTING_DIR / f"{f:06d}.json").exists() for c in sorted_camera_ids]
+    # 计算跳跃读取的帧数和步长
+    total_frames = NUM_FRAMES
+    num_frames_to_read = max(1, int(total_frames * 0.01))  # 均分读取其中的20%
+    step = max(1, int(total_frames / num_frames_to_read))
+
+    print(f"总帧数: {total_frames}, 将跳跃读取 {num_frames_to_read} 帧，步长为 {step}")
+
+    tasks = [(f, c) for f in range(0, total_frames, step) if (SMPLX_FITTING_DIR / f"{f:06d}.json").exists() for c in sorted_camera_ids]
     frames_all = []
     with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
         futures = {executor.submit(process_single_frame_cam, f, c): (f, c) for f, c in tasks}

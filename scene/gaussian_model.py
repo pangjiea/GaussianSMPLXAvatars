@@ -266,9 +266,9 @@ class GaussianModel:
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
         attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
 
-        if self.binding is not None:
-            binding = self.binding.detach().cpu().numpy()
-            attributes = np.concatenate((attributes, binding[:, None]), axis=1)
+        # if self.binding is not None:
+        #     binding = self.binding.detach().cpu().numpy()
+        #     attributes = np.concatenate((attributes, binding[:, None]), axis=1)
 
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')

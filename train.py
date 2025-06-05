@@ -337,7 +337,7 @@ def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, s
                     image_cache.append(image)
                     gt_image_cache.append(gt_image)
 
-                    if idx == len(config['cameras']) - 1 or len(image_cache) == 16:
+                    if idx == len(config['cameras']) - 1 or len(image_cache) == 4:
                         batch_img = torch.stack(image_cache, dim=0)
                         batch_gt_img = torch.stack(gt_image_cache, dim=0)
                         lpips_test += lpips(batch_img, batch_gt_img).sum().double()
@@ -370,7 +370,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--interval", type=int, default=5_000, help="A shared iteration interval for test and saving results and checkpoints.")
+    parser.add_argument("--interval", type=int, default=1_000, help="A shared iteration interval for test and saving results and checkpoints.")
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--quiet", action="store_true")
