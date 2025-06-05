@@ -81,8 +81,8 @@ def getProjectionMatrixFromIntrinsics(znear, zfar,
     P[0, 0] = 2.0 * fx / W
     P[0, 2] = 2.0 * cx / W - 1.0
 
-    # y 方向（带翻转）
-    P[1, 1] = -2.0 * fy / H
+    # y 方向
+    P[1, 1] = 2.0 * fy / H
     P[1, 2] = 2.0 * cy / H - 1.0
 
     # 深度
