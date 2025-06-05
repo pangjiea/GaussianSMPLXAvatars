@@ -254,7 +254,7 @@ class GaussianModel:
         mkdir_p(os.path.dirname(path))
 
         if use_global:
-            xyz = self.get_xyz.detach().cpu().numpy()
+            xyz = self._xyz.detach().cpu().numpy()
         else:
             xyz = self._xyz.detach().cpu().numpy()
         normals = np.zeros_like(xyz)

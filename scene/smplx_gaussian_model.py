@@ -58,9 +58,9 @@ class SMPLXGaussianModel(GaussianModel):
         self.smplx_param = None
         self.smplx_param_orig = None
 
-        if self.binding is None:
-            self.binding = torch.arange(len(self.faces)).cuda()
-            self.binding_counter = torch.ones(len(self.faces), dtype=torch.int32).cuda()
+        # if self.binding is None:
+        #     self.binding = torch.arange(len(self.faces)).cuda()
+        #     self.binding_counter = torch.ones(len(self.faces), dtype=torch.int32).cuda()
 
     def load_meshes(self, train_meshes, test_meshes, tgt_train_meshes, tgt_test_meshes):
         if self.smplx_param is not None:

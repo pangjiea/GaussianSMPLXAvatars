@@ -35,6 +35,7 @@ def main(cfg: Config) -> None:
         model.select_mesh_by_timestep(cfg.timestep)
 
     model.save_ply(cfg.output_path, use_global=True)
+    print(f"Saved global-coordinate PLY to {cfg.output_path}")
 
 
 if __name__ == "__main__":
