@@ -206,8 +206,8 @@ class SMPLXGaussianModel(GaussianModel):
         ]
         self.optimizer.add_param_group({'params': params, 'lr': training_args.flame_pose_lr, 'name': 'smplx'})
 
-    def save_ply(self, path):
-        super().save_ply(path)
+    def save_ply(self, path, use_global: bool = False):
+        super().save_ply(path, use_global=use_global)
         npz_path = Path(path).parent / 'smplx_param.npz'
         smplx_param = {k: v.cpu().numpy() for k, v in self.smplx_param.items()}
         np.savez(str(npz_path), **smplx_param)
