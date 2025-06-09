@@ -61,6 +61,7 @@ def convert_local_to_global_ply(input_ply_path, output_ply_path, model_type="smp
             print(f"✓ 自动检测模型类型: {model_type}")
 
         # 根据模型类型导入相应的类
+        print(f"正在导入{model_type.upper()}模型类...")
         if model_type.lower() == "smplx":
             from scene.smplx_gaussian_model import SMPLXGaussianModel
             GaussianModelClass = SMPLXGaussianModel
@@ -71,8 +72,10 @@ def convert_local_to_global_ply(input_ply_path, output_ply_path, model_type="smp
             # 使用基础GaussianModel
             from scene.gaussian_model import GaussianModel
             GaussianModelClass = GaussianModel
+        print("✓ 模型类导入成功")
 
         # 创建模型实例
+        print(f"正在创建{model_type.upper()}模型实例...")
         gaussians = GaussianModelClass(sh_degree=sh_degree)
         print(f"✓ 创建{model_type.upper()}模型")
 

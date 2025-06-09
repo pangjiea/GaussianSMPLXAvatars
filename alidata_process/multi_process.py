@@ -8,7 +8,6 @@ import numpy as np
 import math
 from tqdm import tqdm
 from copy import deepcopy
-import random
 import cv2  # 用于处理Rodrigues向量和图像去畸变
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -23,10 +22,12 @@ SMPLX_FITTING_DIR = alidata_path / subject_name / "smplx_fitting"
 CALIBRATION_FILE = alidata_path / subject_name / "calibration.json"
 OUTPUT_DATASET_DIR = Path("/home/hello/data/SC_01/export")
 
-NUM_FRAMES = 20  # 总帧数
-USED_CAMERA_ID_STR_LIST = ["019","028"]  # 使用的相机ID列表
-TEST_CAMERA_ID_STR_LIST = []  # 测试集相机ID
-TEST_FRAMES_RATIO = 0.1
+NUM_FRAMES = 1280  # 总帧数
+# 生成001到053的相机ID列表，排除指定的数字
+excluded_numbers = {"002", "006", "012", "021", "024", "025", "030", "033", "043", "044", "051"}
+USED_CAMERA_ID_STR_LIST = [f"{i:03d}" for i in range(1, 54) if f"{i:03d}" not in excluded_numbers]
+TEST_CAMERA_ID_STR_LIST = ["046"]  # 测试集相机ID
+TRAIN_RATIO = 0.7  # 训练集时间步比例
 TRAIN_VAL_SUBJECT_SEED = "SC_01"
 
 # 全局变量，用于并行访问（重命名以反映OpenCV坐标系）
@@ -263,7 +264,14 @@ def process_all_frames_and_cameras(camera_params, cam_id_map, sorted_camera_ids)
     all_camera_params_opencv = camera_params
     cam_id_str_to_int_idx = cam_id_map
 
-    tasks = [(f, c) for f in range(NUM_FRAMES) if (SMPLX_FITTING_DIR / f"{f:06d}.json").exists() for c in sorted_camera_ids]
+    # 计算跳跃读取的帧数和步长
+    total_frames = NUM_FRAMES
+    num_frames_to_read = max(1, int(total_frames * 0.2))  # 均分读取其中的20%
+    step = max(1, int(total_frames / num_frames_to_read))
+
+    print(f"总帧数: {total_frames}, 将跳跃读取 {num_frames_to_read} 帧，步长为 {step}")
+
+    tasks = [(f, c) for f in range(0, total_frames, step) if (SMPLX_FITTING_DIR / f"{f:06d}.json").exists() for c in sorted_camera_ids]
     frames_all = []
     with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
         futures = {executor.submit(process_single_frame_cam, f, c): (f, c) for f, c in tasks}
@@ -313,38 +321,67 @@ def generate_transforms_metadata(frames_data, camera_params, sorted_camera_ids):
     return meta
 
 def split_dataset_and_save_metadata(frames_data, base_meta, cam_id_map):
-    """划分训练/验证/测试集并保存相应的transforms_*.json文件。"""
+    """划分训练/验证/测试集并保存相应的transforms_*.json文件。采用原版逻辑。"""
     print("📊 划分 train/val/test 数据集...")
 
-    test_camera_int_ids = {cam_id_map[c] for c in TEST_CAMERA_ID_STR_LIST if c in cam_id_map}
-    test_set = [f for f in frames_data if f['camera_index'] in test_camera_int_ids]
-    
-    train_val_set = [f for f in frames_data if f not in test_set]
-    
-    train_val_timesteps = sorted({f['timestep_index'] for f in train_val_set})
-    num_val_frames = int(len(train_val_timesteps) * TEST_FRAMES_RATIO) or 1
-    
-    rng = random.Random(TRAIN_VAL_SUBJECT_SEED)
-    rng.shuffle(train_val_timesteps)
-    
-    val_timesteps = set(train_val_timesteps[:num_val_frames])
-    train_timesteps = set(train_val_timesteps[num_val_frames:])
-    
-    train_set = [f for f in train_val_set if f['timestep_index'] in train_timesteps]
-    val_set = [f for f in train_val_set if f['timestep_index'] in val_timesteps]
+    # 获取所有时间步并按原版逻辑划分
+    all_timesteps = sorted(list(set(f['timestep_index'] for f in frames_data)))
+    nt = len(all_timesteps)
+    assert 0 < TRAIN_RATIO <= 1
+    nt_train = int(np.ceil(nt * TRAIN_RATIO))
 
-    def save_split_metadata(name, data_subset):
+    # 时间步划分：前70%用于训练+验证，后30%用于测试
+    train_val_timesteps = all_timesteps[:nt_train]
+    test_timesteps = all_timesteps[nt_train:]
+
+    # 相机划分
+    all_camera_indices = sorted(list(set(f['camera_index'] for f in frames_data)))
+    test_camera_int_ids = {cam_id_map[c] for c in TEST_CAMERA_ID_STR_LIST if c in cam_id_map}
+
+    if test_camera_int_ids:
+        # 有指定测试相机的情况
+        train_camera_indices = [c for c in all_camera_indices if c not in test_camera_int_ids]
+        val_camera_indices = list(test_camera_int_ids)  # 验证集使用测试相机
+        test_camera_indices = all_camera_indices  # 测试集使用所有相机
+    else:
+        # 没有指定测试相机，使用最后一个相机作为验证相机
+        train_camera_indices = all_camera_indices[:-1] if len(all_camera_indices) > 1 else all_camera_indices
+        val_camera_indices = [all_camera_indices[-1]] if len(all_camera_indices) > 1 else []
+        test_camera_indices = all_camera_indices
+
+    # 按原版逻辑分配帧数据
+    train_set = []
+    val_set = []
+    test_set = []
+
+    for frame in frames_data:
+        timestep = frame['timestep_index']
+        camera_idx = frame['camera_index']
+
+        if timestep in train_val_timesteps:
+            # 训练+验证时间段
+            if camera_idx in train_camera_indices:
+                train_set.append(frame)
+            elif camera_idx in val_camera_indices:
+                val_set.append(frame)
+        elif timestep in test_timesteps:
+            # 测试时间段，所有相机都进入测试集
+            test_set.append(frame)
+
+    def save_split_metadata(name, data_subset, timestep_list, camera_list):
         split_meta = deepcopy(base_meta)
         split_meta['frames'] = data_subset
-        split_meta['timestep_indices'] = sorted(list(set(f['timestep_index'] for f in data_subset)))
-        split_meta['camera_indices'] = sorted(list(set(f['camera_index'] for f in data_subset)))
+        split_meta['timestep_indices'] = timestep_list
+        split_meta['camera_indices'] = camera_list
         write_json_to_file(split_meta, OUTPUT_DATASET_DIR / f'transforms_{name}.json')
 
-    save_split_metadata('train', train_set)
-    save_split_metadata('val', val_set)
-    save_split_metadata('test', test_set)
-    
+    save_split_metadata('train', train_set, train_val_timesteps, train_camera_indices)
+    save_split_metadata('val', val_set, train_val_timesteps, val_camera_indices)  # 验证集共享训练集时间步
+    save_split_metadata('test', test_set, test_timesteps, test_camera_indices)
+
     print(f"✅ 数据集划分完成: 训练集={len(train_set)}, 验证集={len(val_set)}, 测试集={len(test_set)}")
+    print(f"   时间步划分: 训练+验证={len(train_val_timesteps)}, 测试={len(test_timesteps)}")
+    print(f"   相机划分: 训练={train_camera_indices}, 验证={val_camera_indices}, 测试={test_camera_indices}")
 
 def main():
     setup_directories()
