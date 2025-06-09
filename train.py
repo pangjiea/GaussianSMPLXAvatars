@@ -337,10 +337,32 @@ def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, s
                     image_cache.append(image)
                     gt_image_cache.append(gt_image)
 
-                    if idx == len(config['cameras']) - 1 or len(image_cache) == 16:
-                        batch_img = torch.stack(image_cache, dim=0)
-                        batch_gt_img = torch.stack(gt_image_cache, dim=0)
-                        lpips_test += lpips(batch_img, batch_gt_img).sum().double()
+                    # 减少批大小以节省内存，并添加内存清理
+                    batch_size = 4  # 从16减少到4
+                    if idx == len(config['cameras']) - 1 or len(image_cache) == batch_size:
+                        try:
+                            batch_img = torch.stack(image_cache, dim=0)
+                            batch_gt_img = torch.stack(gt_image_cache, dim=0)
+                            lpips_batch = lpips(batch_img, batch_gt_img).sum().double()
+                            lpips_test += lpips_batch
+
+                            # 清理中间变量
+                            del batch_img, batch_gt_img, lpips_batch
+                            torch.cuda.empty_cache()
+
+                        except torch.cuda.OutOfMemoryError:
+                            print(f"CUDA OOM during LPIPS calculation, skipping batch of {len(image_cache)} images")
+                            # 如果还是内存不足，尝试逐个计算
+                            for img, gt_img in zip(image_cache, gt_image_cache):
+                                try:
+                                    lpips_single = lpips(img.unsqueeze(0), gt_img.unsqueeze(0)).sum().double()
+                                    lpips_test += lpips_single
+                                    del lpips_single
+                                except torch.cuda.OutOfMemoryError:
+                                    print("Skipping LPIPS calculation for this image due to OOM")
+                                    continue
+                            torch.cuda.empty_cache()
+
                         image_cache = []
                         gt_image_cache = []
 
@@ -358,7 +380,10 @@ def training_report(tb_writer, iteration, losses, elapsed, testing_iterations, s
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
+
+        # 强制清理GPU内存
         torch.cuda.empty_cache()
+        torch.cuda.synchronize()
 
 if __name__ == "__main__":
     # Set up command line argument parser
@@ -370,7 +395,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--interval", type=int, default=5_000, help="A shared iteration interval for test and saving results and checkpoints.")
+    parser.add_argument("--interval", type=int, default=1_000, help="A shared iteration interval for test and saving results and checkpoints.")
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--quiet", action="store_true")
