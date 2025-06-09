@@ -1,1 +1,0 @@
-Namespace(sh_degree=3, source_path='/home/hello/data/SC_01/export', target_path='', model_path='output/sc01', images='images', resolution=1, white_background=True, data_device='cuda', eval=True, bind_to_mesh=True, disable_flame_static_offset=False, not_finetune_flame_params=False, select_camera_id=-1)

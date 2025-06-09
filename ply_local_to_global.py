@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-转换脚本：将局部坐标的PLY文件转换为全局坐标的PLY文件
-同时包含测试功能来验证SMPLX Gaussian模型的save_ply修复是否正确
+PLY坐标转换脚本：将局部坐标的PLY文件转换为全局坐标的PLY文件
+
+适用于绑定到SMPLX/FLAME网格的高斯点，将其从局部坐标系转换为全局坐标系。
+
+使用方法:
+    python ply_local_to_global.py --input input.ply --output output_global.ply
+    python ply_local_to_global.py --input input.ply --output output_global.ply --model smplx --timestep 0
 """
 
 import torch
 import numpy as np
-from pathlib import Path
 import sys
 import os
 import argparse
@@ -15,20 +19,47 @@ from plyfile import PlyData, PlyElement
 # 添加项目路径
 sys.path.append('.')
 
-def convert_local_to_global_ply(input_ply_path, output_ply_path, model_type="smplx", timestep=0, sh_degree=3):
+def detect_model_type(ply_path):
+    """根据PLY文件路径和相关文件自动检测模型类型"""
+    path_lower = ply_path.lower()
+
+    # 首先检查文件名
+    if "smplx" in path_lower:
+        return "smplx"
+    elif "flame" in path_lower:
+        return "flame"
+
+    # 检查同目录下是否有参数文件
+    import os
+    ply_dir = os.path.dirname(ply_path)
+
+    if os.path.exists(os.path.join(ply_dir, "smplx_param.npz")):
+        return "smplx"
+    elif os.path.exists(os.path.join(ply_dir, "flame_param.npz")):
+        return "flame"
+    else:
+        return "gaussian"
+
+def convert_local_to_global_ply(input_ply_path, output_ply_path, model_type="smplx", timestep=0, sh_degree=3, use_original_mesh=False):
     """
     将局部坐标的PLY文件转换为全局坐标的PLY文件
 
     Args:
         input_ply_path: 输入PLY文件路径（局部坐标）
         output_ply_path: 输出PLY文件路径（全局坐标）
-        model_type: 模型类型 ("smplx" 或 "flame")
+        model_type: 模型类型 ("auto", "smplx", "flame", "gaussian")
         timestep: 时间步（默认0）
         sh_degree: 球谐度数（默认3）
+        use_original_mesh: 是否使用原始mesh参数而不是训练后的参数（默认False）
     """
     print(f"=== 转换PLY文件：{input_ply_path} -> {output_ply_path} ===")
 
     try:
+        # 自动检测模型类型
+        if model_type == "auto":
+            model_type = detect_model_type(input_ply_path)
+            print(f"✓ 自动检测模型类型: {model_type}")
+
         # 根据模型类型导入相应的类
         if model_type.lower() == "smplx":
             from scene.smplx_gaussian_model import SMPLXGaussianModel
@@ -63,10 +94,32 @@ def convert_local_to_global_ply(input_ply_path, output_ply_path, model_type="smp
         # 如果是SMPLX或FLAME模型，需要加载mesh数据
         if hasattr(gaussians, 'select_mesh_by_timestep'):
             try:
-                gaussians.select_mesh_by_timestep(timestep)
-                print(f"✓ 选择时间步: {timestep}")
+                # 检查是否有训练后的参数
+                if hasattr(gaussians, 'smplx_param') and gaussians.smplx_param is not None:
+                    if use_original_mesh:
+                        print("✓ 使用原始SMPLX参数")
+                        gaussians.select_mesh_by_timestep(timestep, original=True)
+                    else:
+                        print("✓ 使用训练后的SMPLX参数")
+                        gaussians.select_mesh_by_timestep(timestep, original=False)
+                elif hasattr(gaussians, 'flame_param') and gaussians.flame_param is not None:
+                    if use_original_mesh:
+                        print("✓ 使用原始FLAME参数")
+                        gaussians.select_mesh_by_timestep(timestep, original=True)
+                    else:
+                        print("✓ 使用训练后的FLAME参数")
+                        gaussians.select_mesh_by_timestep(timestep, original=False)
+                else:
+                    print("⚠ 警告：没有找到mesh参数，尝试使用默认参数")
+                    gaussians.select_mesh_by_timestep(timestep)
+                print(f"✓ 选择时间步: {timestep} ({'原始参数' if use_original_mesh else '训练后参数'})")
             except NotImplementedError:
-                print("⚠ 警告：select_mesh_by_timestep未实现，需要手动设置face_*属性")
+                print("❌ 错误：select_mesh_by_timestep未实现，需要手动设置face_*属性")
+                print("提示：请确保模型已正确加载mesh数据")
+                return False
+            except Exception as e:
+                print(f"❌ 选择时间步时出错: {e}")
+                print("提示：可能mesh参数文件损坏或不兼容")
                 return False
 
         # 获取局部和全局坐标
@@ -77,6 +130,7 @@ def convert_local_to_global_ply(input_ply_path, output_ply_path, model_type="smp
 
         print(f"局部坐标范围: [{local_xyz.min():.3f}, {local_xyz.max():.3f}]")
         print(f"全局坐标范围: [{global_xyz.min():.3f}, {global_xyz.max():.3f}]")
+        print(f"坐标中心偏移: {(global_xyz.mean(axis=0) - local_xyz.mean(axis=0))}")
 
         # 检查是否有变换
         if np.allclose(local_xyz, global_xyz, atol=1e-6):
@@ -145,184 +199,61 @@ def save_global_ply(gaussians, path, xyz_global, scaling_global, rotation_global
     el = PlyElement.describe(elements, 'vertex')
     PlyData([el]).write(path)
 
-def test_smplx_save_ply():
-    """测试SMPLX模型的save_ply方法是否正确保存世界坐标"""
-    
-    print("=== 测试SMPLX Gaussian模型的save_ply修复 ===")
-    
-    try:
-        from scene.smplx_gaussian_model import SMPLXGaussianModel
-        
-        # 创建模型
-        gaussians = SMPLXGaussianModel(sh_degree=3)
-        print("✓ 成功创建SMPLXGaussianModel")
-        
-        # 模拟加载一些基本的mesh数据
-        # 这里我们创建一个简单的测试用例
-        test_meshes = {
-            0: {
-                'betas': np.zeros(100),
-                'expression': np.zeros(50),
-                'left_hand_pose': np.zeros(45),
-                'right_hand_pose': np.zeros(45),
-                'jaw_pose': np.zeros(3),
-                'leye_pose': np.zeros(3),
-                'reye_pose': np.zeros(3),
-                'body_pose': np.zeros(63),
-                'Rh': np.zeros(3),
-                'Th': np.zeros(3),
-                'global_orient': np.zeros(3),
-                'transl': np.zeros(3),
-            }
-        }
-        
-        # 加载mesh数据
-        gaussians.load_meshes(test_meshes, {}, {}, {})
-        print("✓ 成功加载mesh数据")
-        
-        # 初始化一些Gaussian点
-        num_points = 1000
-        gaussians._xyz = torch.randn(num_points, 3).cuda() * 0.1  # 小的随机偏移
-        gaussians._features_dc = torch.randn(num_points, 1, 3).cuda()
-        gaussians._features_rest = torch.zeros(num_points, 15, 3).cuda()
-        gaussians._opacity = torch.randn(num_points, 1).cuda()
-        gaussians._scaling = torch.randn(num_points, 3).cuda()
-        gaussians._rotation = torch.randn(num_points, 4).cuda()
-        gaussians.binding = torch.randint(0, len(gaussians.faces), (num_points,)).cuda()
-        print("✓ 初始化Gaussian点")
-        
-        # 选择mesh时间步
-        gaussians.select_mesh_by_timestep(0)
-        print("✓ 选择mesh时间步")
-        
-        # 获取变换前后的坐标
-        local_xyz = gaussians._xyz.detach().cpu().numpy()
-        world_xyz = gaussians.get_xyz.detach().cpu().numpy()
-        
-        print(f"局部坐标范围: [{local_xyz.min():.3f}, {local_xyz.max():.3f}]")
-        print(f"世界坐标范围: [{world_xyz.min():.3f}, {world_xyz.max():.3f}]")
-        print(f"局部坐标中心: {local_xyz.mean(axis=0)}")
-        print(f"世界坐标中心: {world_xyz.mean(axis=0)}")
-        
-        # 检查坐标是否不同（说明有变换）
-        if not np.allclose(local_xyz, world_xyz, atol=1e-6):
-            print("✓ 坐标变换正常工作")
-        else:
-            print("⚠ 警告：局部坐标和世界坐标相同，可能没有变换")
-        
-        # 测试保存PLY
-        test_output_dir = Path("test_output")
-        test_output_dir.mkdir(exist_ok=True)
-        ply_path = test_output_dir / "test_smplx.ply"
-        
-        gaussians.save_ply(str(ply_path))
-        print(f"✓ 成功保存PLY文件到: {ply_path}")
-        
-        # 验证保存的文件
-        if ply_path.exists():
-            print("✓ PLY文件存在")
-            
-            # 读取PLY文件验证坐标
-            from plyfile import PlyData
-            plydata = PlyData.read(str(ply_path))
-            saved_xyz = np.stack((
-                np.asarray(plydata.elements[0]["x"]),
-                np.asarray(plydata.elements[0]["y"]),
-                np.asarray(plydata.elements[0]["z"])
-            ), axis=1)
-            
-            print(f"保存的坐标范围: [{saved_xyz.min():.3f}, {saved_xyz.max():.3f}]")
-            print(f"保存的坐标中心: {saved_xyz.mean(axis=0)}")
-            
-            # 检查保存的是否是世界坐标
-            if np.allclose(saved_xyz, world_xyz, atol=1e-6):
-                print("✅ 成功！保存的是变换后的世界坐标")
-            elif np.allclose(saved_xyz, local_xyz, atol=1e-6):
-                print("❌ 错误！保存的仍然是局部坐标")
-            else:
-                print("⚠ 警告：保存的坐标与预期都不匹配")
-                
-        else:
-            print("❌ PLY文件不存在")
-            
-    except Exception as e:
-        print(f"❌ 测试失败: {e}")
-        import traceback
-        traceback.print_exc()
-
-def test_flame_save_ply():
-    """测试FLAME模型的save_ply方法"""
-    
-    print("\n=== 测试FLAME Gaussian模型的save_ply修复 ===")
-    
-    try:
-        from scene.flame_gaussian_model import FlameGaussianModel
-        
-        # 创建模型
-        gaussians = FlameGaussianModel(sh_degree=3)
-        print("✓ 成功创建FlameGaussianModel")
-        
-        # 注意：FLAME模型需要实际的mesh数据才能正常工作
-        # 这里只是测试代码结构是否正确
-        print("✓ FLAME模型代码结构正确")
-        
-    except Exception as e:
-        print(f"❌ FLAME测试失败: {e}")
-
 def main():
     """主函数，处理命令行参数"""
-    parser = argparse.ArgumentParser(description="转换局部坐标PLY文件为全局坐标PLY文件")
-    parser.add_argument("--input", "-i", type=str, help="输入PLY文件路径")
-    parser.add_argument("--output", "-o", type=str, help="输出PLY文件路径")
-    parser.add_argument("--model", "-m", type=str, default="smplx",
-                       choices=["smplx", "flame", "gaussian"],
-                       help="模型类型 (默认: smplx)")
+    parser = argparse.ArgumentParser(
+        description="转换局部坐标PLY文件为全局坐标PLY文件",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  # 使用训练后的参数（推荐）
+  python ply_local_to_global.py --input local.ply --output global.ply
+  python ply_local_to_global.py --input smplx_local.ply --output smplx_global.ply --model smplx
+
+  # 使用原始mesh参数（如果训练后的结果不理想）
+  python ply_local_to_global.py --input smplx_local.ply --output smplx_global.ply --model smplx --use_original_mesh
+
+  # 指定特定时间步
+  python ply_local_to_global.py --input flame_local.ply --output flame_global.ply --model flame --timestep 5
+        """
+    )
+
+    parser.add_argument("--input", "-i", required=True, help="输入PLY文件路径")
+    parser.add_argument("--output", "-o", required=True, help="输出PLY文件路径")
+    parser.add_argument("--model", "-m", default="auto",
+                       choices=["auto", "smplx", "flame", "gaussian"],
+                       help="模型类型 (默认: auto - 自动检测)")
     parser.add_argument("--timestep", "-t", type=int, default=0,
                        help="时间步 (默认: 0)")
     parser.add_argument("--sh_degree", type=int, default=3,
                        help="球谐度数 (默认: 3)")
-    parser.add_argument("--test", action="store_true",
-                       help="运行测试而不是转换")
+    parser.add_argument("--use_original_mesh", action="store_true",
+                       help="使用原始mesh参数而不是训练后的参数")
 
     args = parser.parse_args()
 
-    if args.test:
-        # 运行测试
-        test_smplx_save_ply()
-        test_flame_save_ply()
-        print("\n=== 测试完成 ===")
+    # 检查输入文件
+    if not os.path.exists(args.input):
+        print(f"错误：输入文件不存在: {args.input}")
+        return 1
+
+    # 执行转换
+    success = convert_local_to_global_ply(
+        args.input,
+        args.output,
+        args.model,
+        args.timestep,
+        args.sh_degree,
+        args.use_original_mesh
+    )
+
+    if success:
+        print("✅ 转换成功完成！")
+        print(f"全局坐标PLY文件已保存到: {args.output}")
+        return 0
     else:
-        # 运行转换
-        if not args.input or not args.output:
-            print("错误：需要指定输入和输出文件路径")
-            parser.print_help()
-            return 1
-
-        if not os.path.exists(args.input):
-            print(f"错误：输入文件不存在: {args.input}")
-            return 1
-
-        success = convert_local_to_global_ply(
-            args.input,
-            args.output,
-            args.model,
-            args.timestep,
-            args.sh_degree
-        )
-
-        if success:
-            print("✅ 转换成功完成！")
-            return 0
-        else:
-            print("❌ 转换失败！")
-            return 1
+        print("❌ 转换失败！")
+        return 1
 
 if __name__ == "__main__":
-    if len(sys.argv) == 1:
-        # 如果没有参数，运行测试
-        test_smplx_save_ply()
-        test_flame_save_ply()
-        print("\n=== 测试完成 ===")
-        print("\n使用 --help 查看转换功能的帮助信息")
-    else:
-        sys.exit(main())
+    sys.exit(main())
