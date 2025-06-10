@@ -3,10 +3,16 @@
 PLY坐标转换脚本：将局部坐标的PLY文件转换为全局坐标的PLY文件
 
 适用于绑定到SMPLX/FLAME网格的高斯点，将其从局部坐标系转换为全局坐标系。
+支持输入npz运动序列，生成对应的PLY文件序列。
 
 使用方法:
+    # 单个时间步转换
     python ply_local_to_global.py --input input.ply --output output_global.ply
     python ply_local_to_global.py --input input.ply --output output_global.ply --model smplx --timestep 0
+
+    # 使用npz运动序列生成PLY序列
+    python ply_local_to_global.py --input input.ply --motion motion.npz --output_dir output_plys/
+    python ply_local_to_global.py --input input.ply --motion motion.npz --output_dir output_plys/ --model smplx
 """
 
 import torch
@@ -15,6 +21,8 @@ import sys
 import os
 import argparse
 from plyfile import PlyData, PlyElement
+from pathlib import Path
+from tqdm import tqdm
 
 # 添加项目路径
 sys.path.append('.')
@@ -39,6 +47,108 @@ def detect_model_type(ply_path):
         return "flame"
     else:
         return "gaussian"
+
+def convert_with_motion_sequence(input_ply_path, motion_npz_path, output_dir, model_type="smplx", sh_degree=3, use_original_mesh=False):
+    """
+    使用npz运动序列生成PLY文件序列
+
+    Args:
+        input_ply_path: 输入PLY文件路径（局部坐标）
+        motion_npz_path: npz运动序列文件路径
+        output_dir: 输出目录
+        model_type: 模型类型 ("auto", "smplx", "flame", "gaussian")
+        sh_degree: 球谐度数（默认3）
+        use_original_mesh: 是否使用原始mesh参数而不是训练后的参数（默认False）
+    """
+    print(f"=== 使用运动序列生成PLY序列 ===")
+    print(f"输入PLY: {input_ply_path}")
+    print(f"运动序列: {motion_npz_path}")
+    print(f"输出目录: {output_dir}")
+
+    # 创建输出目录
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # 自动检测模型类型
+        if model_type == "auto":
+            model_type = detect_model_type(input_ply_path)
+            print(f"✓ 自动检测模型类型: {model_type}")
+
+        # 根据模型类型导入相应的类
+        print(f"正在导入{model_type.upper()}模型类...")
+        if model_type.lower() == "smplx":
+            from scene.smplx_gaussian_model import SMPLXGaussianModel
+            GaussianModelClass = SMPLXGaussianModel
+        elif model_type.lower() == "flame":
+            from scene.flame_gaussian_model import FlameGaussianModel
+            GaussianModelClass = FlameGaussianModel
+        else:
+            print("❌ 错误：npz运动序列只支持SMPLX或FLAME模型")
+            return False
+        print("✓ 模型类导入成功")
+
+        # 创建模型实例
+        print(f"正在创建{model_type.upper()}模型实例...")
+        gaussians = GaussianModelClass(sh_degree=sh_degree)
+        print(f"✓ 创建{model_type.upper()}模型")
+
+        # 加载PLY文件和运动序列（像localviewer一样）
+        print(f"正在加载PLY文件和运动序列...")
+        gaussians.load_ply(input_ply_path, has_target=False, motion_path=motion_npz_path)
+        print(f"✓ 加载PLY文件，包含{gaussians._xyz.shape[0]}个高斯点")
+
+        # 检查是否有绑定信息
+        if gaussians.binding is None:
+            print("❌ 错误：PLY文件没有绑定信息，无法应用运动序列")
+            return False
+
+        print(f"✓ 发现绑定信息，绑定到{gaussians.binding.max().item() + 1}个面")
+
+        # 获取帧数
+        if model_type.lower() == "smplx":
+            if gaussians.smplx_param is None:
+                print("❌ 错误：SMPLX参数加载失败")
+                return False
+            num_frames = gaussians.smplx_param['expression'].shape[0]
+            print(f"✓ 加载SMPLX运动序列，包含{num_frames}帧")
+        elif model_type.lower() == "flame":
+            if gaussians.flame_param is None:
+                print("❌ 错误：FLAME参数加载失败")
+                return False
+            num_frames = gaussians.flame_param['expr'].shape[0]
+            print(f"✓ 加载FLAME运动序列，包含{num_frames}帧")
+
+        # 为每一帧生成PLY文件
+        print(f"正在生成{num_frames}个PLY文件...")
+        for timestep in tqdm(range(num_frames), desc="生成PLY文件"):
+            try:
+                # 选择当前时间步的mesh
+                gaussians.select_mesh_by_timestep(timestep, original=use_original_mesh)
+
+                # 获取全局坐标
+                global_xyz = gaussians.get_xyz.detach().cpu().numpy()
+                global_scaling = gaussians.get_scaling.detach().cpu().numpy()
+                global_rotation = gaussians.get_rotation.detach().cpu().numpy()
+
+                # 生成输出文件名
+                output_ply_path = output_path / f"frame_{timestep:06d}.ply"
+
+                # 保存PLY文件
+                save_global_ply(gaussians, str(output_ply_path), global_xyz, global_scaling, global_rotation)
+
+            except Exception as e:
+                print(f"⚠ 警告：处理第{timestep}帧时出错: {e}")
+                continue
+
+        print(f"✅ 成功生成{num_frames}个PLY文件到目录: {output_dir}")
+        return True
+
+    except Exception as e:
+        print(f"❌ 转换失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 def convert_local_to_global_ply(input_ply_path, output_ply_path, model_type="smplx", timestep=0, sh_degree=3, use_original_mesh=False):
     """
@@ -205,11 +315,11 @@ def save_global_ply(gaussians, path, xyz_global, scaling_global, rotation_global
 def main():
     """主函数，处理命令行参数"""
     parser = argparse.ArgumentParser(
-        description="转换局部坐标PLY文件为全局坐标PLY文件",
+        description="转换局部坐标PLY文件为全局坐标PLY文件，支持npz运动序列",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  # 使用训练后的参数（推荐）
+  # 单个时间步转换
   python ply_local_to_global.py --input local.ply --output global.ply
   python ply_local_to_global.py --input smplx_local.ply --output smplx_global.ply --model smplx
 
@@ -218,16 +328,22 @@ def main():
 
   # 指定特定时间步
   python ply_local_to_global.py --input flame_local.ply --output flame_global.ply --model flame --timestep 5
+
+  # 使用npz运动序列生成PLY序列
+  python ply_local_to_global.py --input local.ply --motion motion.npz --output_dir output_plys/
+  python ply_local_to_global.py --input smplx_local.ply --motion smplx_motion.npz --output_dir smplx_plys/ --model smplx
         """
     )
 
     parser.add_argument("--input", "-i", required=True, help="输入PLY文件路径")
-    parser.add_argument("--output", "-o", required=True, help="输出PLY文件路径")
+    parser.add_argument("--output", "-o", help="输出PLY文件路径（单个文件模式）")
+    parser.add_argument("--motion", help="npz运动序列文件路径（序列模式）")
+    parser.add_argument("--output_dir", help="输出目录路径（序列模式）")
     parser.add_argument("--model", "-m", default="auto",
                        choices=["auto", "smplx", "flame", "gaussian"],
                        help="模型类型 (默认: auto - 自动检测)")
     parser.add_argument("--timestep", "-t", type=int, default=0,
-                       help="时间步 (默认: 0)")
+                       help="时间步 (默认: 0，仅单个文件模式)")
     parser.add_argument("--sh_degree", type=int, default=3,
                        help="球谐度数 (默认: 3)")
     parser.add_argument("--use_original_mesh", action="store_true",
@@ -240,22 +356,54 @@ def main():
         print(f"错误：输入文件不存在: {args.input}")
         return 1
 
-    # 执行转换
-    success = convert_local_to_global_ply(
-        args.input,
-        args.output,
-        args.model,
-        args.timestep,
-        args.sh_degree,
-        args.use_original_mesh
-    )
+    # 检查模式：序列模式 vs 单个文件模式
+    if args.motion and args.output_dir:
+        # 序列模式：使用npz运动序列
+        if not os.path.exists(args.motion):
+            print(f"错误：运动序列文件不存在: {args.motion}")
+            return 1
 
-    if success:
-        print("✅ 转换成功完成！")
-        print(f"全局坐标PLY文件已保存到: {args.output}")
-        return 0
+        print("🎬 序列模式：使用npz运动序列生成PLY文件序列")
+        success = convert_with_motion_sequence(
+            args.input,
+            args.motion,
+            args.output_dir,
+            args.model,
+            args.sh_degree,
+            args.use_original_mesh
+        )
+
+        if success:
+            print("✅ 序列转换成功完成！")
+            print(f"PLY文件序列已保存到目录: {args.output_dir}")
+            return 0
+        else:
+            print("❌ 序列转换失败！")
+            return 1
+
+    elif args.output:
+        # 单个文件模式
+        print("📄 单个文件模式：转换指定时间步的PLY文件")
+        success = convert_local_to_global_ply(
+            args.input,
+            args.output,
+            args.model,
+            args.timestep,
+            args.sh_degree,
+            args.use_original_mesh
+        )
+
+        if success:
+            print("✅ 转换成功完成！")
+            print(f"全局坐标PLY文件已保存到: {args.output}")
+            return 0
+        else:
+            print("❌ 转换失败！")
+            return 1
     else:
-        print("❌ 转换失败！")
+        print("❌ 错误：请指定输出模式")
+        print("  单个文件模式：使用 --output 参数")
+        print("  序列模式：使用 --motion 和 --output_dir 参数")
         return 1
 
 if __name__ == "__main__":

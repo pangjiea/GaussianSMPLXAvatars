@@ -10,6 +10,8 @@ from tqdm import tqdm
 from copy import deepcopy
 import cv2  # 用于处理Rodrigues向量和图像去畸变
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+import threading
 
 # --- 配置区域 ---
 alidata_path = Path("/home/hello/data")
@@ -20,7 +22,7 @@ IMAGE_BASE_DIR = Path("/home/hello/remote/server2/data1/sapiens_processing/final
 UNDISTORTED_IMAGE_DIR = Path("/home/hello/remote/server2/data1/sapiens_processing/alidata_process/undistorted_images") / subject_name
 SMPLX_FITTING_DIR = alidata_path / subject_name / "smplx_fitting"
 CALIBRATION_FILE = alidata_path / subject_name / "calibration.json"
-OUTPUT_DATASET_DIR = Path("/home/hello/data/SC_01/export")
+OUTPUT_DATASET_DIR = Path("/home/hello/data/SC_01/export_all")
 
 NUM_FRAMES = 1280  # 总帧数
 # 生成001到053的相机ID列表，排除指定的数字
@@ -29,6 +31,11 @@ USED_CAMERA_ID_STR_LIST = [f"{i:03d}" for i in range(1, 54) if f"{i:03d}" not in
 TEST_CAMERA_ID_STR_LIST = ["046"]  # 测试集相机ID
 TRAIN_RATIO = 0.7  # 训练集时间步比例
 TRAIN_VAL_SUBJECT_SEED = "SC_01"
+
+# 性能优化配置 - 针对16核系统优化
+MAX_WORKERS_MULTIPLIER = 6  # I/O密集型任务的线程倍数（16核 × 6 = 96线程）
+BATCH_SIZE = 100  # 批处理大小，16核系统可以处理更大批次
+PROGRESS_UPDATE_INTERVAL = 50  # 进度更新间隔，减少频繁更新的开销
 
 # 全局变量，用于并行访问（重命名以反映OpenCV坐标系）
 all_camera_params_opencv = {}
@@ -162,73 +169,85 @@ def process_calibration_data(calib_file: Path, specified_camera_ids: list = None
 
 def process_single_frame_cam(frame_idx, cam_id_str):
     global all_camera_params_opencv, cam_id_str_to_int_idx
-    
-    # SMPL-X 参数
-    src = SMPLX_FITTING_DIR/f"{frame_idx:06d}.json"
-    if not src.exists():
-        return None
-    rel = Path('smplx_param')/src.name
-    shutil.copyfile(str(src), str(OUTPUT_DATASET_DIR/rel))
-    
-    # 确保每个相机使用正确的参数
-    if cam_id_str not in all_camera_params_opencv:
-        print(f"错误: 相机ID {cam_id_str} 不存在于相机参数中")
-        return None
-    
-    cam = all_camera_params_opencv[cam_id_str]
-    
-    # 使用原始参数进行去畸变
-    K_original = np.array(cam['original_K_cv'])
-    dist_original = np.array(cam['original_dist_cv'])
-    
-    stem = f"{frame_idx:06d}_{cam_id_str}"
-    img_p = IMAGE_BASE_DIR/f"{stem}.png"
-    if not img_p.exists(): 
-        img_p = IMAGE_BASE_DIR/f"{stem}.jpg"
-    mask_p = MASK_BASE_DIR/f"{stem}.png"
-    
-    if not img_p.exists() or not mask_p.exists(): 
-        return None
-    
-    img = cv2.imread(str(img_p))
-    mask = cv2.imread(str(mask_p), cv2.IMREAD_GRAYSCALE)
-    
-    if img is None or mask is None: 
-        return None
-    
-    # 去畸变处理
-    img_undistorted = cv2.undistort(img, K_original, dist_original, None, K_original)
-    
-    # 可选：也对mask进行去畸变（如果mask是在原始图像上生成的）
-    mask_undistorted = cv2.undistort(mask, K_original, dist_original, None, K_original)
-    
-    idx = cam_id_str_to_int_idx[cam_id_str]
-    name = f"{frame_idx:06d}_{idx:02d}.png"
 
-    # 保存去畸变后的图像和mask到输出数据集目录
-    cv2.imwrite(str(OUTPUT_DATASET_DIR/'images'/name), img_undistorted)
-    cv2.imwrite(str(OUTPUT_DATASET_DIR/'masks_images'/name), mask_undistorted)
-    
-    return {
-        "timestep_index": frame_idx,
-        "timestep_index_original": frame_idx,
-        "camera_index": idx,
+    try:
+        # 快速检查：确保相机参数存在
+        if cam_id_str not in all_camera_params_opencv:
+            return {"error": f"相机参数不存在: {cam_id_str}"}
 
-        "cx": cam['cx'],
-        "cy": cam['cy'],
-        "fl_x": cam['fl_x'],
-        "fl_y": cam['fl_y'],
-        "h": cam['height'],
-        "w": cam['width'],
-        "camera_angle_x": cam['camera_angle_x'],
-        "camera_angle_y": cam['camera_angle_y'],
-        
-        "transform_matrix": cam['transform_matrix'],
+        # 快速检查：SMPL-X 参数文件是否存在
+        src = SMPLX_FITTING_DIR/f"{frame_idx:06d}.json"
+        if not src.exists():
+            return {"error": f"SMPLX文件不存在: {src}"}
 
-        "file_path": str(Path('images')/name),
-        "fg_mask_path": str(Path('masks_images')/name),
-        "smplx_param_path": str(rel),
-    }
+        # 快速检查：图像和mask文件是否存在
+        stem = f"{frame_idx:06d}_{cam_id_str}"
+        img_p = IMAGE_BASE_DIR/f"{stem}.png"
+        if not img_p.exists():
+            img_p = IMAGE_BASE_DIR/f"{stem}.jpg"
+        mask_p = MASK_BASE_DIR/f"{stem}.png"
+
+        if not img_p.exists():
+            return {"error": f"图像文件不存在: {img_p} 和 {IMAGE_BASE_DIR/f'{stem}.jpg'}"}
+        if not mask_p.exists():
+            return {"error": f"掩码文件不存在: {mask_p}"}
+
+        # 获取相机参数
+        cam = all_camera_params_opencv[cam_id_str]
+        idx = cam_id_str_to_int_idx[cam_id_str]
+
+        # 预先计算输出路径
+        rel = Path('smplx_param')/src.name
+        name = f"{frame_idx:06d}_{idx:02d}.png"
+        output_img_path = OUTPUT_DATASET_DIR/'images'/name
+        output_mask_path = OUTPUT_DATASET_DIR/'masks_images'/name
+        output_smplx_path = OUTPUT_DATASET_DIR/rel
+
+        # 复制SMPL-X参数（只在第一次处理该帧时复制）
+        if not output_smplx_path.exists():
+            shutil.copyfile(str(src), str(output_smplx_path))
+
+        # 读取图像和mask
+        img = cv2.imread(str(img_p))
+        mask = cv2.imread(str(mask_p), cv2.IMREAD_GRAYSCALE)
+
+        if img is None or mask is None:
+            return None
+
+        # 去畸变处理（使用预先转换的numpy数组）
+        K_original = np.array(cam['original_K_cv'], dtype=np.float64)
+        dist_original = np.array(cam['original_dist_cv'], dtype=np.float64)
+
+        # 并行去畸变处理
+        img_undistorted = cv2.undistort(img, K_original, dist_original, None, K_original)
+        mask_undistorted = cv2.undistort(mask, K_original, dist_original, None, K_original)
+
+        # 保存处理后的图像和mask
+        cv2.imwrite(str(output_img_path), img_undistorted)
+        cv2.imwrite(str(output_mask_path), mask_undistorted)
+
+        # 返回元数据（预先构建字典以减少重复计算）
+        return {
+            "timestep_index": frame_idx,
+            "timestep_index_original": frame_idx,
+            "camera_index": idx,
+            "cx": cam['cx'],
+            "cy": cam['cy'],
+            "fl_x": cam['fl_x'],
+            "fl_y": cam['fl_y'],
+            "h": cam['height'],
+            "w": cam['width'],
+            "camera_angle_x": cam['camera_angle_x'],
+            "camera_angle_y": cam['camera_angle_y'],
+            "transform_matrix": cam['transform_matrix'],
+            "file_path": str(Path('images')/name),
+            "fg_mask_path": str(Path('masks_images')/name),
+            "smplx_param_path": str(rel),
+        }
+
+    except Exception as e:
+        # 返回错误信息用于诊断
+        return {"error": f"处理异常: {str(e)}"}
 
 
 def setup_directories():
@@ -271,14 +290,106 @@ def process_all_frames_and_cameras(camera_params, cam_id_map, sorted_camera_ids)
 
     print(f"总帧数: {total_frames}, 将跳跃读取 {num_frames_to_read} 帧，步长为 {step}")
 
-    tasks = [(f, c) for f in range(0, total_frames, step) if (SMPLX_FITTING_DIR / f"{f:06d}.json").exists() for c in sorted_camera_ids]
+    # 生成所有任务前先检查文件存在情况
+    available_frames = [f for f in range(0, total_frames, step) if (SMPLX_FITTING_DIR / f"{f:06d}.json").exists()]
+    print(f"可用帧数: {len(available_frames)}/{num_frames_to_read}")
+
+    # 检查图像文件存在情况
+    sample_frame = available_frames[0] if available_frames else 0
+    sample_cam = sorted_camera_ids[0] if sorted_camera_ids else "001"
+    sample_stem = f"{sample_frame:06d}_{sample_cam}"
+    sample_img = IMAGE_BASE_DIR / f"{sample_stem}.png"
+    sample_mask = MASK_BASE_DIR / f"{sample_stem}.png"
+
+    print(f"📁 检查文件路径:")
+    print(f"   SMPLX目录: {SMPLX_FITTING_DIR}")
+    print(f"   图像目录: {IMAGE_BASE_DIR}")
+    print(f"   掩码目录: {MASK_BASE_DIR}")
+    print(f"   样例文件: {sample_img} (存在: {sample_img.exists()})")
+    print(f"   样例掩码: {sample_mask} (存在: {sample_mask.exists()})")
+
+    tasks = [(f, c) for f in available_frames for c in sorted_camera_ids]
+    print(f"总任务数: {len(tasks)} (帧数 × 相机数)")
+
+    # 优化并行处理：根据实际CPU核心数调整
+    actual_cores = os.cpu_count()
+    # 如果检测到的核心数异常，使用保守估计
+    if actual_cores > 20:  # 可能是超线程导致的
+        effective_cores = actual_cores // 2
+        print(f"⚠️  检测到 {actual_cores} 个逻辑核心，可能包含超线程，使用 {effective_cores} 个物理核心计算")
+    else:
+        effective_cores = actual_cores
+
+    max_workers = min(len(tasks), effective_cores * MAX_WORKERS_MULTIPLIER)
+    print(f"🚀 使用 {max_workers} 个工作线程进行并行处理")
+    print(f"   逻辑核心数: {actual_cores}, 有效核心数: {effective_cores}, 线程倍数: {MAX_WORKERS_MULTIPLIER}")
+
     frames_all = []
-    with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+    error_stats = {}
+    start_time = time.time()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 批量提交任务以减少开销
         futures = {executor.submit(process_single_frame_cam, f, c): (f, c) for f, c in tasks}
-        for future in tqdm(as_completed(futures), total=len(futures), desc="并行导出帧数据"):
-            result = future.result()
-            if result:
-                frames_all.append(result)
+
+        # 使用更高效的结果收集方式
+        completed_count = 0
+
+        with tqdm(total=len(futures), desc="并行导出帧数据", unit="任务") as pbar:
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    if result:
+                        if "error" in result:
+                            # 收集错误统计
+                            error_type = result["error"].split(":")[0]
+                            error_stats[error_type] = error_stats.get(error_type, 0) + 1
+                        else:
+                            frames_all.append(result)
+                    completed_count += 1
+                    pbar.update(1)
+
+                    # 定期更新进度信息和性能统计
+                    if completed_count % PROGRESS_UPDATE_INTERVAL == 0:
+                        current_time = time.time()
+                        elapsed = current_time - start_time
+                        speed = completed_count / elapsed if elapsed > 0 else 0
+                        success_rate = len(frames_all) / completed_count * 100 if completed_count > 0 else 0
+                        eta = (len(futures) - completed_count) / speed if speed > 0 else 0
+
+                        pbar.set_postfix({
+                            "成功": len(frames_all),
+                            "成功率": f"{success_rate:.1f}%",
+                            "速度": f"{speed:.1f}任务/秒",
+                            "预计剩余": f"{eta/60:.1f}分钟"
+                        })
+
+                        # 如果成功率太低，显示错误统计
+                        if completed_count >= 100 and success_rate < 10:
+                            print(f"\n⚠️  成功率过低 ({success_rate:.1f}%)，错误统计:")
+                            for error_type, count in error_stats.items():
+                                print(f"   {error_type}: {count} 次")
+
+                except Exception as e:
+                    print(f"任务执行失败: {e}")
+                    pbar.update(1)
+
+    end_time = time.time()
+    total_time = end_time - start_time
+    avg_speed = len(tasks) / total_time if total_time > 0 else 0
+
+    print(f"✅ 并行处理完成: 成功处理 {len(frames_all)}/{len(tasks)} 个任务")
+    print(f"   总耗时: {total_time/60:.2f} 分钟")
+    print(f"   平均速度: {avg_speed:.2f} 任务/秒")
+    print(f"   成功率: {len(frames_all)/len(tasks)*100:.1f}%")
+
+    # 显示详细错误统计
+    if error_stats:
+        print(f"\n📊 错误统计:")
+        for error_type, count in sorted(error_stats.items(), key=lambda x: x[1], reverse=True):
+            percentage = count / len(tasks) * 100
+            print(f"   {error_type}: {count} 次 ({percentage:.1f}%)")
+
     return frames_all
 
 def generate_transforms_metadata(frames_data, camera_params, sorted_camera_ids):
