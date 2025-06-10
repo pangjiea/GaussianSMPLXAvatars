@@ -1,3 +1,5 @@
 smplx_model/
 flame_model/
 output/
+scene/__pycache__
+__pycache__/
