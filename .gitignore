@@ -4,3 +4,4 @@ output/
 scene/__pycache__
 __pycache__/
 *.pyc
+test_motion_output/
