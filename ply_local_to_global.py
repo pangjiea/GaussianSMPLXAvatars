@@ -93,9 +93,9 @@ def convert_with_motion_sequence(input_ply_path, motion_npz_path, output_dir, mo
         gaussians = GaussianModelClass(sh_degree=sh_degree)
         print(f"✓ 创建{model_type.upper()}模型")
 
-        # 加载PLY文件和运动序列（像localviewer一样）
-        print(f"正在加载PLY文件和运动序列...")
-        gaussians.load_ply(input_ply_path, has_target=False, motion_path=motion_npz_path)
+        # 先只加载PLY文件（不加载motion）
+        print(f"正在加载PLY文件...")
+        gaussians.load_ply(input_ply_path, has_target=False)
         print(f"✓ 加载PLY文件，包含{gaussians._xyz.shape[0]}个高斯点")
 
         # 检查是否有绑定信息
@@ -105,31 +105,79 @@ def convert_with_motion_sequence(input_ply_path, motion_npz_path, output_dir, mo
 
         print(f"✓ 发现绑定信息，绑定到{gaussians.binding.max().item() + 1}个面")
 
-        # 获取帧数
+        # 加载运动序列数据
+        print(f"正在加载运动序列: {motion_npz_path}")
+        motion_data = np.load(motion_npz_path)
+
         if model_type.lower() == "smplx":
-            if gaussians.smplx_param is None:
-                print("❌ 错误：SMPLX参数加载失败")
-                return False
-            num_frames = gaussians.smplx_param['expression'].shape[0]
+            # 创建运动参数字典
+            motion_params = {k: torch.from_numpy(v).cuda() for k, v in motion_data.items() if v.dtype == np.float32}
+            num_frames = motion_params['expression'].shape[0]
             print(f"✓ 加载SMPLX运动序列，包含{num_frames}帧")
         elif model_type.lower() == "flame":
-            if gaussians.flame_param is None:
-                print("❌ 错误：FLAME参数加载失败")
-                return False
-            num_frames = gaussians.flame_param['expr'].shape[0]
+            # 创建运动参数字典
+            motion_params = {k: torch.from_numpy(v).cuda() for k, v in motion_data.items() if v.dtype == np.float32}
+            num_frames = motion_params['expr'].shape[0]
             print(f"✓ 加载FLAME运动序列，包含{num_frames}帧")
 
         # 为每一帧生成PLY文件
         print(f"正在生成{num_frames}个PLY文件...")
         for timestep in tqdm(range(num_frames), desc="生成PLY文件"):
             try:
-                # 选择当前时间步的mesh
-                gaussians.select_mesh_by_timestep(timestep, original=use_original_mesh)
+                # 不使用select_mesh_by_timestep，而是直接调用convert_local_to_global_ply的逻辑
+                # 为当前时间步创建参数字典
+                if model_type.lower() == "smplx":
+                    # 构建当前帧的参数字典
+                    frame_param = {}
+                    for key, value in motion_params.items():
+                        if key == 'betas':
+                            # betas是静态的，使用训练后的参数（如果有）
+                            if gaussians.smplx_param is not None and 'betas' in gaussians.smplx_param:
+                                frame_param[key] = gaussians.smplx_param['betas']
+                            else:
+                                frame_param[key] = value
+                        else:
+                            # 其他参数使用当前时间步的值
+                            frame_param[key] = value[[timestep]]
+
+                    # 使用update_mesh_by_param_dict而不是select_mesh_by_timestep
+                    gaussians.update_mesh_by_param_dict(frame_param)
+
+                elif model_type.lower() == "flame":
+                    # 构建当前帧的参数字典
+                    frame_param = {}
+                    for key, value in motion_params.items():
+                        if key in ['shape', 'static_offset']:
+                            # shape和static_offset是静态的，使用训练后的参数（如果有）
+                            if gaussians.flame_param is not None and key in gaussians.flame_param:
+                                frame_param[key] = gaussians.flame_param[key]
+                            else:
+                                frame_param[key] = value
+                        else:
+                            # 其他参数使用当前时间步的值
+                            frame_param[key] = value[[timestep]]
+
+                    # 使用update_mesh_by_param_dict而不是select_mesh_by_timestep
+                    gaussians.update_mesh_by_param_dict(frame_param)
 
                 # 获取全局坐标
                 global_xyz = gaussians.get_xyz.detach().cpu().numpy()
                 global_scaling = gaussians.get_scaling.detach().cpu().numpy()
                 global_rotation = gaussians.get_rotation.detach().cpu().numpy()
+
+                # 调试信息：对比第一帧
+                if timestep == 0:
+                    local_xyz = gaussians._xyz.detach().cpu().numpy()
+                    print(f"第0帧调试信息:")
+                    print(f"  局部坐标范围: [{local_xyz.min():.3f}, {local_xyz.max():.3f}]")
+                    print(f"  全局坐标范围: [{global_xyz.min():.3f}, {global_xyz.max():.3f}]")
+                    print(f"  坐标中心偏移: {(global_xyz.mean(axis=0) - local_xyz.mean(axis=0))}")
+
+                    # 检查是否有变换
+                    if np.allclose(local_xyz, global_xyz, atol=1e-6):
+                        print("  ⚠ 警告：局部和全局坐标相同，可能没有变换")
+                    else:
+                        print("  ✓ 检测到坐标变换")
 
                 # 生成输出文件名
                 output_ply_path = output_path / f"frame_{timestep:06d}.ply"
@@ -139,6 +187,8 @@ def convert_with_motion_sequence(input_ply_path, motion_npz_path, output_dir, mo
 
             except Exception as e:
                 print(f"⚠ 警告：处理第{timestep}帧时出错: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
 
         print(f"✅ 成功生成{num_frames}个PLY文件到目录: {output_dir}")
@@ -190,7 +240,7 @@ def convert_local_to_global_ply(input_ply_path, output_ply_path, model_type="smp
         print(f"✓ 创建{model_type.upper()}模型")
 
         # 加载PLY文件
-        gaussians.load_ply(input_ply_path)
+        gaussians.load_ply(input_ply_path, has_target=False)
         print(f"✓ 加载PLY文件，包含{gaussians._xyz.shape[0]}个高斯点")
 
         # 检查是否有绑定信息

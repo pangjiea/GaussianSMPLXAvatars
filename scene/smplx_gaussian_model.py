@@ -215,43 +215,38 @@ class SMPLXGaussianModel(GaussianModel):
     def load_ply(self, path, **kwargs):
         super().load_ply(path)
 
-        # 首先加载训练后的参数（如果存在）
-        npz_path = Path(path).parent / 'smplx_param.npz'
-        if npz_path.exists():
-            smplx_param = np.load(str(npz_path))
-            smplx_param = {k: torch.from_numpy(v).cuda() for k, v in smplx_param.items()}
-            self.smplx_param = smplx_param
-            self.num_timesteps = self.smplx_param['expression'].shape[0]
+        if not kwargs.get('has_target', True):
+            # When there is no target motion specified, use the finetuned SMPLX parameters.
+            # This operation overwrites the SMPLX parameters loaded from the dataset.
+            npz_path = Path(path).parent / 'smplx_param.npz'
+            if npz_path.exists():
+                smplx_param = np.load(str(npz_path))
+                smplx_param = {k: torch.from_numpy(v).cuda() for k, v in smplx_param.items()}
+                self.smplx_param = smplx_param
+                self.num_timesteps = self.smplx_param['expression'].shape[0]
 
-        # 如果指定了motion_path，加载新的运动序列
         if 'motion_path' in kwargs and kwargs['motion_path'] is not None:
+            # When there is a motion sequence specified, load only dynamic parameters.
             motion_path = Path(kwargs['motion_path'])
             if motion_path.exists():
-                print(f"正在从{motion_path}加载运动序列...")
                 motion_data = np.load(str(motion_path))
                 motion_params = {k: torch.from_numpy(v).cuda() for k, v in motion_data.items() if v.dtype == np.float32}
 
-                if self.smplx_param is not None:
-                    # 保留静态参数，更新动态参数
-                    self.smplx_param.update({
-                        'expression': motion_params.get('expression', self.smplx_param['expression']),
-                        'left_hand_pose': motion_params.get('left_hand_pose', self.smplx_param['left_hand_pose']),
-                        'right_hand_pose': motion_params.get('right_hand_pose', self.smplx_param['right_hand_pose']),
-                        'jaw_pose': motion_params.get('jaw_pose', self.smplx_param['jaw_pose']),
-                        'leye_pose': motion_params.get('leye_pose', self.smplx_param['leye_pose']),
-                        'reye_pose': motion_params.get('reye_pose', self.smplx_param['reye_pose']),
-                        'body_pose': motion_params.get('body_pose', self.smplx_param['body_pose']),
-                        'global_orient': motion_params.get('global_orient', self.smplx_param['global_orient']),
-                        'transl': motion_params.get('transl', self.smplx_param['transl']),
-                        'Rh': motion_params.get('Rh', self.smplx_param.get('Rh', torch.zeros_like(motion_params.get('Rh', torch.zeros(motion_params['expression'].shape[0], 3).cuda())))),
-                        'Th': motion_params.get('Th', self.smplx_param.get('Th', torch.zeros_like(motion_params.get('Th', torch.zeros(motion_params['expression'].shape[0], 3).cuda())))),
-                    })
-                else:
-                    # 如果没有训练后的参数，直接使用motion参数
-                    self.smplx_param = motion_params
-
+                self.smplx_param = {
+                    # keep the static parameters
+                    'betas': self.smplx_param['betas'],
+                    # update the dynamic parameters
+                    'expression': motion_params.get('expression', self.smplx_param['expression']),
+                    'left_hand_pose': motion_params.get('left_hand_pose', self.smplx_param['left_hand_pose']),
+                    'right_hand_pose': motion_params.get('right_hand_pose', self.smplx_param['right_hand_pose']),
+                    'jaw_pose': motion_params.get('jaw_pose', self.smplx_param['jaw_pose']),
+                    'leye_pose': motion_params.get('leye_pose', self.smplx_param['leye_pose']),
+                    'reye_pose': motion_params.get('reye_pose', self.smplx_param['reye_pose']),
+                    'body_pose': motion_params.get('body_pose', self.smplx_param['body_pose']),
+                    'global_orient': motion_params.get('global_orient', self.smplx_param['global_orient']),
+                    'transl': motion_params.get('transl', self.smplx_param['transl']),
+                    'Rh': motion_params.get('Rh', self.smplx_param.get('Rh', torch.zeros(motion_params['expression'].shape[0], 3).cuda())),
+                    'Th': motion_params.get('Th', self.smplx_param.get('Th', torch.zeros(motion_params['expression'].shape[0], 3).cuda())),
+                }
                 self.num_timesteps = self.smplx_param['expression'].shape[0]
-                print(f"✓ 加载运动序列，包含{self.num_timesteps}帧")
-            else:
-                print(f"⚠ 警告：运动序列文件不存在: {motion_path}")
 
