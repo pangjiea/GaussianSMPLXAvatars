@@ -6,3 +6,4 @@ __pycache__/
 *.pyc
 test_motion_output/
 test_output/
+motionply/

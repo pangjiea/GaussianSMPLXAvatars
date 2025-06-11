@@ -112,6 +112,28 @@ class SMPLXGaussianModel(GaussianModel):
 
         for k, v in self.smplx_param.items():
             self.smplx_param[k] = v.float().cuda()
+
+        # --- FIX: Handle canonical parameter initialization ---
+        # If we only loaded one frame (the canonical one), replicate its parameters across all timesteps.
+        if len(pose_meshes) == 1:
+            # Get the single frame ID that was loaded (usually 0 for canonical data)
+            canonical_frame_id = list(pose_meshes.keys())[0]
+            print(f"Detected canonical SMPL-X setup: replicating frame {canonical_frame_id} parameters to all {T} timesteps.")
+
+            for key in self.smplx_param:
+                # 'betas' are static shape parameters, they do not vary per frame. Skip them.
+                if key == 'betas':
+                    continue
+
+                # Check if it's a per-frame parameter tensor
+                param_tensor = self.smplx_param[key]
+                if param_tensor.dim() > 1 and param_tensor.shape[0] == T:
+                    # Get the data from the single loaded canonical frame
+                    canonical_data = param_tensor[canonical_frame_id].clone()
+                    # Broadcast this data to all T frames
+                    self.smplx_param[key] = canonical_data.unsqueeze(0).expand(T, *canonical_data.shape).contiguous()
+        # --- END OF FIX ---
+
         self.smplx_param_orig = {k: v.clone() for k, v in self.smplx_param.items()}
 
     def _smplx_forward(self, params):
@@ -223,7 +245,7 @@ class SMPLXGaussianModel(GaussianModel):
                 smplx_param = np.load(str(npz_path))
                 smplx_param = {k: torch.from_numpy(v).cuda() for k, v in smplx_param.items()}
                 self.smplx_param = smplx_param
-                self.num_timesteps = self.smplx_param['expression'].shape[0]
+                self.num_timesteps = self.smplx_param['expression'].shape[0]  # required by viewers
 
         if 'motion_path' in kwargs and kwargs['motion_path'] is not None:
             # When there is a motion sequence specified, load only dynamic parameters.

@@ -124,51 +124,91 @@ def convert_with_motion_sequence(input_ply_path, motion_npz_path, output_dir, mo
         print(f"正在生成{num_frames}个PLY文件...")
         for timestep in tqdm(range(num_frames), desc="生成PLY文件"):
             try:
-                # 不使用select_mesh_by_timestep，而是直接调用convert_local_to_global_ply的逻辑
-                # 为当前时间步创建参数字典
+                # 使用与select_mesh_by_timestep相同的逻辑，但应用NPZ运动序列
                 if model_type.lower() == "smplx":
-                    # 构建当前帧的参数字典
+                    # 直接构建当前帧的参数字典，不依赖训练后参数的帧数
                     frame_param = {}
+
+                    # 从训练后参数中获取静态参数
+                    if gaussians.smplx_param is not None:
+                        for key, value in gaussians.smplx_param.items():
+                            if key == 'betas':
+                                # betas是静态的，直接使用训练后的值
+                                frame_param[key] = value
+                            # 其他参数先不处理，等NPZ覆盖
+
+                    # 用NPZ中的动态参数构建当前帧参数
                     for key, value in motion_params.items():
                         if key == 'betas':
-                            # betas是静态的，使用训练后的参数（如果有）
-                            if gaussians.smplx_param is not None and 'betas' in gaussians.smplx_param:
-                                frame_param[key] = gaussians.smplx_param['betas']
-                            else:
+                            # 如果NPZ中有betas但训练后参数中也有，优先使用训练后的
+                            if 'betas' not in frame_param:
                                 frame_param[key] = value
                         else:
-                            # 其他参数使用当前时间步的值
-                            frame_param[key] = value[[timestep]]
+                            # 动态参数：使用NPZ中当前时间步的值
+                            if len(value.shape) > 1:
+                                frame_param[key] = value[[timestep]]  # 保持batch维度
+                            else:
+                                frame_param[key] = value  # 静态参数
 
-                    # 使用update_mesh_by_param_dict而不是select_mesh_by_timestep
-                    gaussians.update_mesh_by_param_dict(frame_param)
+                    # 确保所有必要的参数都存在
+                    if 'betas' not in frame_param:
+                        # 如果没有betas，创建默认值
+                        frame_param['betas'] = torch.zeros(100, device='cuda')
+
+                    # 使用SMPLX前向传播
+                    verts, verts_cano = gaussians._smplx_forward(frame_param)
+                    gaussians.update_mesh_properties(verts, verts_cano)
 
                 elif model_type.lower() == "flame":
-                    # 构建当前帧的参数字典
+                    # 直接构建当前帧的FLAME参数
                     frame_param = {}
+
+                    # 从训练后参数中获取静态参数
+                    if gaussians.flame_param is not None:
+                        for key, value in gaussians.flame_param.items():
+                            if key in ['shape', 'static_offset']:
+                                # 静态参数，直接使用训练后的值
+                                frame_param[key] = value
+
+                    # 用NPZ中的动态参数构建当前帧参数
                     for key, value in motion_params.items():
                         if key in ['shape', 'static_offset']:
-                            # shape和static_offset是静态的，使用训练后的参数（如果有）
-                            if gaussians.flame_param is not None and key in gaussians.flame_param:
-                                frame_param[key] = gaussians.flame_param[key]
-                            else:
+                            # 如果NPZ中有静态参数但训练后参数中也有，优先使用训练后的
+                            if key not in frame_param:
                                 frame_param[key] = value
                         else:
-                            # 其他参数使用当前时间步的值
-                            frame_param[key] = value[[timestep]]
+                            # 动态参数：使用NPZ中当前时间步的值
+                            if len(value.shape) > 1:
+                                frame_param[key] = value[[timestep]]  # 保持batch维度
+                            else:
+                                frame_param[key] = value  # 静态参数
 
-                    # 使用update_mesh_by_param_dict而不是select_mesh_by_timestep
-                    gaussians.update_mesh_by_param_dict(frame_param)
+                    # 使用FLAME模型的前向传播
+                    verts, verts_cano = gaussians.flame_model(
+                        frame_param['shape'][None, ...],
+                        frame_param['expr'],
+                        frame_param['rotation'],
+                        frame_param['neck_pose'],
+                        frame_param['jaw_pose'],
+                        frame_param['eyes_pose'],
+                        frame_param['translation'],
+                        zero_centered_at_root_node=False,
+                        return_landmarks=False,
+                        return_verts_cano=True,
+                        static_offset=frame_param['static_offset'],
+                        dynamic_offset=frame_param['dynamic_offset'],
+                    )
+                    gaussians.update_mesh_properties(verts, verts_cano)
 
                 # 获取全局坐标
                 global_xyz = gaussians.get_xyz.detach().cpu().numpy()
                 global_scaling = gaussians.get_scaling.detach().cpu().numpy()
                 global_rotation = gaussians.get_rotation.detach().cpu().numpy()
 
-                # 调试信息：对比第一帧
-                if timestep == 0:
+                # 调试信息：对比关键帧
+                if timestep == 0 or timestep % 100 == 0:
                     local_xyz = gaussians._xyz.detach().cpu().numpy()
-                    print(f"第0帧调试信息:")
+                    print(f"第{timestep}帧调试信息:")
                     print(f"  局部坐标范围: [{local_xyz.min():.3f}, {local_xyz.max():.3f}]")
                     print(f"  全局坐标范围: [{global_xyz.min():.3f}, {global_xyz.max():.3f}]")
                     print(f"  坐标中心偏移: {(global_xyz.mean(axis=0) - local_xyz.mean(axis=0))}")
