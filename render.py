@@ -146,6 +146,39 @@ def render_motion_sequence(dataset: ModelParams, iteration: int, pipeline: Pipel
 
         print(f"  总共加载了 {len(motion_params)} 个参数")
 
+        # 检测是否是跳帧数据（步长5）并进行插值
+        original_frames = motion_params['expression'].shape[0] if 'expression' in motion_params else 0
+        if original_frames > 0:
+            # 检测步长
+            step_size = 5  # 根据multiprocess脚本的步长
+            target_frames = original_frames * step_size
+
+            print(f"  检测到跳帧数据：原始{original_frames}帧，步长{step_size}，将插值到{target_frames}帧")
+
+            # 对所有动态参数进行插值
+            interpolated_params = {}
+            for key, value in motion_params.items():
+                if key == 'betas' or len(value.shape) == 1:
+                    # 静态参数，直接复制
+                    interpolated_params[key] = value
+                else:
+                    # 动态参数，进行线性插值
+                    # 使用torch.nn.functional.interpolate进行插值
+                    interpolated_value = torch.nn.functional.interpolate(
+                        value.unsqueeze(0).transpose(1, 2),  # (1, dim, original_frames)
+                        size=target_frames,
+                        mode='linear',
+                        align_corners=True
+                    ).transpose(1, 2).squeeze(0)  # (target_frames, dim)
+
+                    interpolated_params[key] = interpolated_value
+                    print(f"    {key}: {value.shape} -> {interpolated_value.shape}")
+
+            motion_params = interpolated_params
+            num_frames = target_frames
+        else:
+            print("  ⚠ 警告：无法检测帧数，使用原始数据")
+
         # 检测模型类型并获取帧数
         if hasattr(gaussians, 'smplx_param') and gaussians.smplx_param is not None:
             model_type = "smplx"

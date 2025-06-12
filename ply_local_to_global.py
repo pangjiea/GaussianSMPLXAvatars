@@ -48,7 +48,7 @@ def detect_model_type(ply_path):
     else:
         return "gaussian"
 
-def convert_with_motion_sequence(input_ply_path, motion_npz_path, output_dir, model_type="smplx", sh_degree=3, use_original_mesh=False):
+def convert_with_motion_sequence(input_ply_path, motion_npz_path, output_dir, model_type="smplx", sh_degree=3, use_original_mesh=False, step_size=5, no_interpolate=False):
     """
     使用npz运动序列生成PLY文件序列
 
@@ -109,16 +109,62 @@ def convert_with_motion_sequence(input_ply_path, motion_npz_path, output_dir, mo
         print(f"正在加载运动序列: {motion_npz_path}")
         motion_data = np.load(motion_npz_path)
 
+        # 改进的参数加载，支持更多数据类型
+        motion_params = {}
+        for k, v in motion_data.items():
+            if v.dtype in [np.float32, np.float64]:
+                motion_params[k] = torch.from_numpy(v.astype(np.float32)).cuda()
+                print(f"  加载参数 {k}: {v.shape} -> {motion_params[k].shape}")
+            else:
+                print(f"  跳过参数 {k}: dtype={v.dtype}")
+
+        # 检测原始帧数
         if model_type.lower() == "smplx":
-            # 创建运动参数字典
-            motion_params = {k: torch.from_numpy(v).cuda() for k, v in motion_data.items() if v.dtype == np.float32}
-            num_frames = motion_params['expression'].shape[0]
-            print(f"✓ 加载SMPLX运动序列，包含{num_frames}帧")
+            original_frames = motion_params['expression'].shape[0] if 'expression' in motion_params else 0
+            print(f"✓ 加载SMPLX运动序列，包含{original_frames}帧原始数据")
         elif model_type.lower() == "flame":
-            # 创建运动参数字典
-            motion_params = {k: torch.from_numpy(v).cuda() for k, v in motion_data.items() if v.dtype == np.float32}
-            num_frames = motion_params['expr'].shape[0]
-            print(f"✓ 加载FLAME运动序列，包含{num_frames}帧")
+            original_frames = motion_params['expr'].shape[0] if 'expr' in motion_params else 0
+            print(f"✓ 加载FLAME运动序列，包含{original_frames}帧原始数据")
+        else:
+            print(f"❌ 不支持的模型类型: {model_type}")
+            return False
+
+        if original_frames == 0:
+            print(f"❌ 无法检测运动序列帧数")
+            return False
+
+        # 检测是否需要跳帧插值
+        auto_interpolate = not no_interpolate and step_size > 1
+
+        if auto_interpolate and step_size > 1:
+            target_frames = original_frames * step_size
+            print(f"🔄 自动检测到跳帧数据，执行插值：{original_frames} 帧 -> {target_frames} 帧（步长 {step_size}）")
+
+            # 对所有动态参数进行插值
+            interpolated_params = {}
+            for key, value in motion_params.items():
+                if key == 'betas' or (model_type.lower() == "flame" and key in ['shape', 'static_offset']) or len(value.shape) == 1:
+                    # 静态参数，直接复制
+                    interpolated_params[key] = value
+                    print(f"    {key}: 静态参数，保持 {value.shape}")
+                else:
+                    # 动态参数，进行线性插值
+                    interpolated_value = torch.nn.functional.interpolate(
+                        value.unsqueeze(0).transpose(1, 2),  # (1, dim, original_frames)
+                        size=target_frames,
+                        mode='linear',
+                        align_corners=True
+                    ).transpose(1, 2).squeeze(0)  # (target_frames, dim)
+
+                    interpolated_params[key] = interpolated_value
+                    print(f"    {key}: 插值 {value.shape} -> {interpolated_value.shape}")
+
+            motion_params = interpolated_params
+            num_frames = target_frames
+            print(f"✓ 插值完成，最终处理 {num_frames} 帧数据")
+        else:
+            num_frames = original_frames
+            print(f"✓ 使用原始数据，处理 {num_frames} 帧")
 
         # 为每一帧生成PLY文件
         print(f"正在生成{num_frames}个PLY文件...")
@@ -219,7 +265,7 @@ def convert_with_motion_sequence(input_ply_path, motion_npz_path, output_dir, mo
                     else:
                         print("  ✓ 检测到坐标变换")
 
-                # 生成输出文件名
+                # 生成输出文件名（使用连续序号）
                 output_ply_path = output_path / f"frame_{timestep:06d}.ply"
 
                 # 保存PLY文件
@@ -422,6 +468,13 @@ def main():
   # 使用npz运动序列生成PLY序列
   python ply_local_to_global.py --input local.ply --motion motion.npz --output_dir output_plys/
   python ply_local_to_global.py --input smplx_local.ply --motion smplx_motion.npz --output_dir smplx_plys/ --model smplx
+
+  # 处理multiprocess步长5的跳帧数据（自动插值）
+  python ply_local_to_global.py --input output/sc01-5/point_cloud/iteration_300000/point_cloud.ply --motion output/sc01-5/point_cloud/iteration_300000/smplx_param.npz --output_dir motionply/ --model smplx
+
+  # 禁用插值或自定义步长
+  python ply_local_to_global.py --input local.ply --motion motion.npz --output_dir output_plys/ --no_interpolate
+  python ply_local_to_global.py --input local.ply --motion motion.npz --output_dir output_plys/ --step_size 10
         """
     )
 
@@ -438,6 +491,10 @@ def main():
                        help="球谐度数 (默认: 3)")
     parser.add_argument("--use_original_mesh", action="store_true",
                        help="使用原始mesh参数而不是训练后的参数")
+    parser.add_argument("--step_size", type=int, default=5,
+                       help="跳帧步长，用于插值处理（默认: 5，设为1禁用插值）")
+    parser.add_argument("--no_interpolate", action="store_true",
+                       help="禁用自动插值功能")
 
     args = parser.parse_args()
 
@@ -460,7 +517,9 @@ def main():
             args.output_dir,
             args.model,
             args.sh_degree,
-            args.use_original_mesh
+            args.use_original_mesh,
+            args.step_size,
+            args.no_interpolate
         )
 
         if success:
